@@ -128,6 +128,57 @@ async function saveConfig() {
 }
 function revertConfig() { pluginCfg = { ...savedPluginCfg }; populateForm(); setStatus('reverted', 'am'); }
 
+/* ── config presets ── */
+function getPresets() { try { return JSON.parse(localStorage.getItem('hmc-presets') || '{}'); } catch { return {}; } }
+function setPresets(p) { localStorage.setItem('hmc-presets', JSON.stringify(p)); }
+
+function refreshPresetList() {
+  const sel = $('#preset-sel');
+  const presets = getPresets();
+  sel.innerHTML = '<option value="">-- select --</option>';
+  Object.keys(presets).sort().forEach(name => {
+    const opt = document.createElement('option');
+    opt.value = name; opt.textContent = name;
+    sel.appendChild(opt);
+  });
+}
+
+$('#btn-preset-save')?.addEventListener('click', () => {
+  const name = $('#preset-name').value.trim();
+  if (!name) { setStatus('enter a preset name', 'rd'); return; }
+  readForm();
+  const presets = getPresets();
+  presets[name] = { ...pluginCfg };
+  setPresets(presets);
+  refreshPresetList();
+  $('#preset-sel').value = name;
+  $('#preset-name').value = '';
+  setStatus(`preset "${name}" saved`, 'gr');
+});
+
+$('#btn-preset-load')?.addEventListener('click', () => {
+  const name = $('#preset-sel').value;
+  if (!name) { setStatus('select a preset', 'rd'); return; }
+  const presets = getPresets();
+  if (!presets[name]) { setStatus('preset not found', 'rd'); return; }
+  pluginCfg = { ...DEFAULTS, ...presets[name] };
+  populateForm();
+  setStatus(`preset "${name}" loaded (unsaved)`, 'am');
+});
+
+$('#btn-preset-delete')?.addEventListener('click', () => {
+  const name = $('#preset-sel').value;
+  if (!name) { setStatus('select a preset', 'rd'); return; }
+  if (!confirm(`Delete preset "${name}"?`)) return;
+  const presets = getPresets();
+  delete presets[name];
+  setPresets(presets);
+  refreshPresetList();
+  setStatus(`preset "${name}" deleted`, 'rd');
+});
+
+refreshPresetList();
+
 /* ── detail panel ── */
 function showDetail(title, kvPairs) {
   $('#detail-title').textContent = title;

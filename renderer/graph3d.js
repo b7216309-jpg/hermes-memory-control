@@ -24,28 +24,51 @@ const CAT_COLORS = {
   general:     0x727169,
 };
 
-/* ── simple orbit controls ── */
+/* ── orbit + pan controls ── */
 class SimpleOrbit {
   constructor(cam, el) {
     this.cam = cam;
     this.el = el;
     this.spherical = { r: 120, theta: Math.PI / 2, phi: 0 };
     this.target = new THREE.Vector3(0, 0, 0);
-    this.dragging = false;
+    this.orbiting = false;
+    this.panning = false;
     this.lastX = 0;
     this.lastY = 0;
     this._updateCamera();
-    el.addEventListener('mousedown', e => { this.dragging = true; this.lastX = e.clientX; this.lastY = e.clientY; });
-    el.addEventListener('mousemove', e => {
-      if (!this.dragging) return;
-      const dx = e.clientX - this.lastX, dy = e.clientY - this.lastY;
-      this.spherical.phi -= dx * 0.005;
-      this.spherical.theta = Math.max(0.1, Math.min(Math.PI - 0.1, this.spherical.theta - dy * 0.005));
+
+    el.addEventListener('contextmenu', e => e.preventDefault());
+
+    el.addEventListener('mousedown', e => {
+      if (e.button === 0) { this.orbiting = true; }       // left = orbit
+      else if (e.button === 2) { this.panning = true; }   // right = pan
       this.lastX = e.clientX; this.lastY = e.clientY;
-      this._updateCamera();
     });
-    el.addEventListener('mouseup', () => this.dragging = false);
-    el.addEventListener('mouseleave', () => this.dragging = false);
+
+    el.addEventListener('mousemove', e => {
+      const dx = e.clientX - this.lastX, dy = e.clientY - this.lastY;
+      this.lastX = e.clientX; this.lastY = e.clientY;
+
+      if (this.orbiting) {
+        this.spherical.phi -= dx * 0.005;
+        this.spherical.theta = Math.max(0.1, Math.min(Math.PI - 0.1, this.spherical.theta - dy * 0.005));
+        this._updateCamera();
+      } else if (this.panning) {
+        // Pan perpendicular to camera direction
+        const right = new THREE.Vector3();
+        const up = new THREE.Vector3();
+        this.cam.getWorldDirection(new THREE.Vector3());
+        right.crossVectors(this.cam.up, new THREE.Vector3().subVectors(this.cam.position, this.target).normalize()).normalize();
+        up.crossVectors(new THREE.Vector3().subVectors(this.cam.position, this.target).normalize(), right).normalize();
+        const panSpeed = this.spherical.r * 0.002;
+        this.target.add(right.multiplyScalar(-dx * panSpeed));
+        this.target.add(up.multiplyScalar(dy * panSpeed));
+        this._updateCamera();
+      }
+    });
+
+    el.addEventListener('mouseup', () => { this.orbiting = false; this.panning = false; });
+    el.addEventListener('mouseleave', () => { this.orbiting = false; this.panning = false; });
     el.addEventListener('wheel', e => {
       this.spherical.r = Math.max(10, Math.min(500, this.spherical.r + e.deltaY * 0.1));
       this._updateCamera();
@@ -152,11 +175,14 @@ function animate() {
       if (labelSprites[i]) labelSprites[i].position.set(n.x, n.y - (nodeObjects[i].geometry.parameters?.radius || 2) - 1.8, n.z);
     }
   });
+  // Use node lookup map for edge updates (O(1) instead of O(n) per edge)
+  const nodeMap = {};
+  graphNodes.forEach(n => nodeMap[n.id] = n);
   edgeObjects.forEach((line, i) => {
     const e = graphEdges[i];
     if (!e) return;
-    const src = graphNodes.find(n => n.id === e.source);
-    const tgt = graphNodes.find(n => n.id === e.target);
+    const src = nodeMap[e.source];
+    const tgt = nodeMap[e.target];
     if (src && tgt) {
       const p = line.geometry.attributes.position.array;
       p[0]=src.x; p[1]=src.y; p[2]=src.z; p[3]=tgt.x; p[4]=tgt.y; p[5]=tgt.z;
@@ -182,7 +208,7 @@ function applyForces() {
       nodes[j].vx-=fx; nodes[j].vy-=fy; nodes[j].vz-=fz;
     }
   }
-  // attraction
+  // attraction (edges)
   const map = {}; nodes.forEach(n => map[n.id]=n);
   graphEdges.forEach(e => {
     const a=map[e.source], b=map[e.target]; if(!a||!b) return;
@@ -192,9 +218,18 @@ function applyForces() {
     a.vx+=dx/dist*f; a.vy+=dy/dist*f; a.vz+=dz/dist*f;
     b.vx-=dx/dist*f; b.vy-=dy/dist*f; b.vz-=dz/dist*f;
   });
-  // gravity
-  nodes.forEach(n => { n.vx-=n.x*0.002; n.vy-=n.y*0.002; n.vz-=n.z*0.002; });
-  // apply
+
+  // ── importance-based gravity: high importance → pulled to center,
+  //    low importance → pushed to periphery
+  nodes.forEach(n => {
+    // importance 10 → strong pull (0.006), importance 1 → weak pull (0.0006)
+    const impFactor = ((n.importance || 5) / 10) * 0.006;
+    n.vx -= n.x * impFactor;
+    n.vy -= n.y * impFactor;
+    n.vz -= n.z * impFactor;
+  });
+
+  // damping
   nodes.forEach(n => { n.vx*=0.86; n.vy*=0.86; n.vz*=0.86; n.x+=n.vx; n.y+=n.vy; n.z+=n.vz; });
 }
 
@@ -210,11 +245,22 @@ async function loadGraph() {
   const data = await dbq('graph');
   if (!data || data.error) return;
 
-  graphNodes = (data.nodes||[]).map(n => ({
-    ...n,
-    x:(Math.random()-.5)*80, y:(Math.random()-.5)*80, z:(Math.random()-.5)*80,
-    vx:0, vy:0, vz:0,
-  }));
+  // ── Initial positions: importance-based radial placement
+  //    High importance starts near center, low importance at edge
+  graphNodes = (data.nodes||[]).map(n => {
+    const imp = n.importance || 5;
+    // importance 10 → radius ~5, importance 1 → radius ~70
+    const spawnR = 5 + (10 - imp) * 7;
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.acos(2 * Math.random() - 1);
+    return {
+      ...n,
+      x: spawnR * Math.sin(phi) * Math.cos(theta),
+      y: spawnR * Math.sin(phi) * Math.sin(theta),
+      z: spawnR * Math.cos(phi),
+      vx: 0, vy: 0, vz: 0,
+    };
+  });
   graphEdges = data.edges||[];
 
   // nodes
@@ -281,7 +327,7 @@ function onMouseMove(event) {
   } else {
     hoverEl.style.display = 'none';
     hoverNode = null;
-    canvas.style.cursor = 'grab';
+    canvas.style.cursor = controls?.panning ? 'move' : 'grab';
   }
 }
 

@@ -154,6 +154,7 @@ input[type=number]{-moz-appearance:textfield;}
 /* ── 3D canvas ── */
 #graph-canvas{flex:1;min-height:0;background:var(--bg);cursor:grab;}
 #graph-canvas:active{cursor:grabbing;}
+#graph-canvas.panning{cursor:move !important;}
 #graph-hud{position:absolute;top:8px;left:8px;pointer-events:auto;z-index:10;display:flex;gap:4px;}
 #graph-hud .badge{cursor:pointer;transition:opacity .2s;user-select:none;}
 #graph-hud .badge.filter-off{opacity:0.25;text-decoration:line-through;}
@@ -209,6 +210,7 @@ input[type=number]{-moz-appearance:textfield;}
 .dash-grid .box{min-height:120px;}
 
 /* ── config tabs ── */
+.preset-bar{display:flex;gap:6px;align-items:center;padding:4px 10px;flex-shrink:0;border-bottom:1px solid var(--bdr);background:var(--bg1);}
 .cfg-tabs{display:flex;gap:0;border-bottom:1px solid var(--bdr);flex-shrink:0;}
 .cfg-tab{font-family:var(--f);font-size:9px;letter-spacing:1px;color:var(--fg3);background:transparent;border:none;border-bottom:2px solid transparent;padding:4px 12px 3px;cursor:pointer;transition:color .1s;}
 .cfg-tab:hover{color:var(--wh);}.cfg-tab.active{color:var(--cy);border-bottom-color:var(--cy);font-weight:700;}
@@ -445,6 +447,15 @@ input[type=number]{-moz-appearance:textfield;}
 
     <!-- ══════ CONFIG ══════ -->
     <div class="view" id="v-config">
+      <div class="preset-bar">
+        <span class="sec" style="margin:0;flex-shrink:0;">PRESETS</span>
+        <select class="s-sel" id="preset-sel" style="width:160px;flex:none;"><option value="">-- select --</option></select>
+        <button class="s-btn btn-cy" id="btn-preset-load">LOAD</button>
+        <button class="s-btn btn-rd" id="btn-preset-delete">DEL</button>
+        <div style="flex:1"></div>
+        <input class="s-text" id="preset-name" placeholder="preset name..." spellcheck="false" style="max-width:160px;">
+        <button class="s-btn btn-gr" id="btn-preset-save">SAVE PRESET</button>
+      </div>
       <div class="cfg-tabs">
         <button class="cfg-tab active" data-cfg="cfg-consolidation">CONSOLIDATION</button>
         <button class="cfg-tab" data-cfg="cfg-retrieval">RETRIEVAL</button>

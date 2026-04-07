@@ -444,14 +444,4 @@ $('#nav-toggle')?.addEventListener('click', () => {
 (() => { if (loadApp().navExpanded) { $('#nav')?.classList.add('expanded'); const t = $('#nav-toggle'); if (t) t.textContent = '<'; } })();
 
 /* ── auto-connect ── */
-(async () => {
-  const mock = await api.isMock();
-  if (mock) {
-    $('#hermes-path').value = 'DEMO MODE';
-    hermesHome = 'DEMO MODE';
-    saveApp({ hermesHome });
-    setTimeout(connect, 200);
-    return;
-  }
-  if (hermesHome) setTimeout(connect, 200);
-})();
+if (hermesHome) setTimeout(connect, 200);

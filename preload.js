@@ -8,5 +8,4 @@ window.api = {
   loadConfig:     (h) => ipcRenderer.invoke('load-config', h),
   saveConfig:     (h, c) => ipcRenderer.invoke('save-config', h, c),
   dbQuery:        (h, type, args) => ipcRenderer.invoke('db-query', h, type, args),
-  isMock:         () => ipcRenderer.invoke('is-mock'),
 };

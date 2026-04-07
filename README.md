@@ -4,6 +4,8 @@ A desktop control panel for the [Hermes](https://github.com/b7216309-jpg/hermes-
 
 Built with Electron, Three.js, and a direct WSL bridge to the SQLite database.
 
+![Dashboard](screenshots/dashboard.png)
+
 ---
 
 ## Features
@@ -19,6 +21,13 @@ Full table views for every entity type with search, category filters, and inline
 - **Preferences & Policies** — manage behavioral directives
 - **Contradictions** — supersession history with winner/loser context
 
+![Facts Explorer](screenshots/facts.png)
+
+### Inline Editing
+Click any row to open the detail panel — edit content, category, importance, and more. Save, deactivate, or delete directly.
+
+![Editing](screenshots/editing.png)
+
 ### 3D Memory Graph
 Interactive force-directed graph powered by Three.js:
 - **Topics** as violet octahedrons, **Facts** as orange spheres, **Preferences** as amber cubes
@@ -28,8 +37,12 @@ Interactive force-directed graph powered by Three.js:
 - Click to filter by type (topics / facts / preferences / edges)
 - Orbit, zoom, and click-to-inspect
 
+![3D Graph](screenshots/graph3d.png)
+
 ### Wiki Viewer
 Browse the compiled markdown wiki exported by the plugin — rendered in-app with internal link navigation.
+
+![Wiki](screenshots/wiki.png)
 
 ### Config Editor
 Edit all 30+ plugin configuration keys organized in tabs:
@@ -39,6 +52,8 @@ Edit all 30+ plugin configuration keys organized in tabs:
 - Wiki export options
 - LLM & embedding backend
 - Salience decay & spaced review
+
+![Config](screenshots/config.png)
 
 ### Themes
 Four color themes matching the Gruvbox/Nord/Forest/Ember palette family. JetBrains Mono throughout.
@@ -89,20 +104,6 @@ npm start
 ```
 
 Then click **...** to browse to your Hermes home directory (e.g. `\\wsl$\Ubuntu\home\user\.hermes`) and hit **CONNECT**.
-
-### Demo Mode
-
-Run with mock data (no WSL/database needed) for screenshots or testing:
-
-```bash
-npx electron . --mock
-```
-
----
-
-## Screenshots
-
-> *Coming soon*
 
 ---
 

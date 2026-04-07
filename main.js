@@ -4,10 +4,8 @@ const fs = require('fs');
 const os = require('os');
 const yaml = require('js-yaml');
 const { execSync } = require('child_process');
-const { mockQuery, MOCK_CONFIG } = require('./mock_data');
 
 let win;
-const MOCK_MODE = process.argv.includes('--mock');
 
 function createWindow() {
   win = new BrowserWindow({
@@ -28,9 +26,6 @@ function createWindow() {
 
 app.whenReady().then(createWindow);
 app.on('window-all-closed', () => app.quit());
-
-/* ── mock mode IPC ── */
-ipcMain.handle('is-mock', () => MOCK_MODE);
 
 /* ── window controls ── */
 ipcMain.on('win:minimize', () => win?.minimize());
@@ -71,7 +66,6 @@ function resolveConfigPath(hermesHome) {
 
 /* ── load config ── */
 ipcMain.handle('load-config', async (_e, hermesHome) => {
-  if (MOCK_MODE) return MOCK_CONFIG;
   try {
     const cfgPath = resolveConfigPath(hermesHome);
     if (!fs.existsSync(cfgPath)) return { error: `config.yaml not found at ${cfgPath}` };
@@ -110,7 +104,6 @@ function wslTempScript() {
 }
 
 ipcMain.handle('db-query', async (_e, hermesHome, queryType, queryArgs) => {
-  if (MOCK_MODE) return mockQuery(queryType, queryArgs);
   try {
     const wsl = parseWslPath(hermesHome);
     if (!wsl) return { error: 'Use a WSL path (\\\\wsl$\\...).' };

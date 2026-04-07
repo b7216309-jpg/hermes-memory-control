@@ -3,9 +3,15 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const yaml = require('js-yaml');
-const { execSync } = require('child_process');
+const { exec } = require('child_process');
 
 let win;
+
+/* ── cached state to avoid re-reading config on every query ── */
+let cachedWsl = null;        // { distro, linuxPath }
+let cachedDbPath = '';       // linux path to .db
+let cachedWikiDir = '';      // linux path to wiki dir
+let cachedScriptPath = '';   // WSL path to db_query.py
 
 function createWindow() {
   win = new BrowserWindow({
@@ -64,7 +70,17 @@ function resolveConfigPath(hermesHome) {
   return direct;
 }
 
-/* ── load config ── */
+/* ── copy db_query.py once, reuse path ── */
+function ensureScript() {
+  if (cachedScriptPath) return cachedScriptPath;
+  const src = path.join(__dirname, 'db_query.py');
+  const tmp = path.join(os.tmpdir(), 'hmc_db_query.py');
+  fs.copyFileSync(src, tmp);
+  cachedScriptPath = tmp.replace(/^([A-Z]):/i, (_, d) => `/mnt/${d.toLowerCase()}`).replace(/\\/g, '/');
+  return cachedScriptPath;
+}
+
+/* ── load config (also caches paths for db-query) ── */
 ipcMain.handle('load-config', async (_e, hermesHome) => {
   try {
     const cfgPath = resolveConfigPath(hermesHome);
@@ -72,6 +88,18 @@ ipcMain.handle('load-config', async (_e, hermesHome) => {
     const raw = fs.readFileSync(cfgPath, 'utf-8');
     const doc = yaml.load(raw);
     const pluginCfg = doc?.plugins?.['consolidating-local-memory'] || {};
+
+    // Cache WSL paths for fast db-query calls
+    cachedWsl = parseWslPath(hermesHome);
+    if (cachedWsl) {
+      let dbRel = pluginCfg.db_path || '$HERMES_HOME/consolidating_memory.db';
+      cachedDbPath = dbRel.replace('$HERMES_HOME', cachedWsl.linuxPath);
+      let wikiRel = pluginCfg.wiki_export_dir || '$HERMES_HOME/consolidating_memory_wiki';
+      cachedWikiDir = wikiRel.replace('$HERMES_HOME', cachedWsl.linuxPath);
+    }
+    // Pre-copy the script
+    ensureScript();
+
     return { config: pluginCfg, fullConfig: doc, configPath: cfgPath };
   } catch (e) {
     return { error: e.message };
@@ -95,31 +123,43 @@ ipcMain.handle('save-config', async (_e, hermesHome, pluginCfg) => {
   }
 });
 
-/* ── universal DB query via WSL python ── */
-function wslTempScript() {
-  const src = path.join(__dirname, 'db_query.py');
-  const tmp = path.join(os.tmpdir(), 'hmc_db_query.py');
-  fs.copyFileSync(src, tmp);
-  return tmp.replace(/^([A-Z]):/i, (_, d) => `/mnt/${d.toLowerCase()}`).replace(/\\/g, '/');
+/* ── async exec helper (returns Promise) ── */
+function execAsync(cmd, opts) {
+  return new Promise((resolve, reject) => {
+    exec(cmd, opts, (err, stdout, stderr) => {
+      if (err) { err.stderr = stderr; reject(err); }
+      else resolve(stdout);
+    });
+  });
 }
 
+/* ── universal DB query via WSL python (non-blocking) ── */
 ipcMain.handle('db-query', async (_e, hermesHome, queryType, queryArgs) => {
   try {
-    const wsl = parseWslPath(hermesHome);
-    if (!wsl) return { error: 'Use a WSL path (\\\\wsl$\\...).' };
+    // Use cached paths when available, fall back to parsing fresh
+    let wsl = cachedWsl;
+    let linuxDbPath = cachedDbPath;
+    let wikiDir = cachedWikiDir;
 
-    const cfgPath = resolveConfigPath(hermesHome);
-    const raw = fs.readFileSync(cfgPath, 'utf-8');
-    const doc = yaml.load(raw);
-    const pluginCfg = doc?.plugins?.['consolidating-local-memory'] || {};
+    if (!wsl) {
+      wsl = parseWslPath(hermesHome);
+      if (!wsl) return { error: 'Use a WSL path (\\\\wsl$\\...).' };
+      const cfgPath = resolveConfigPath(hermesHome);
+      const raw = fs.readFileSync(cfgPath, 'utf-8');
+      const doc = yaml.load(raw);
+      const pluginCfg = doc?.plugins?.['consolidating-local-memory'] || {};
+      let dbRel = pluginCfg.db_path || '$HERMES_HOME/consolidating_memory.db';
+      linuxDbPath = dbRel.replace('$HERMES_HOME', wsl.linuxPath);
+      let wikiRel = pluginCfg.wiki_export_dir || '$HERMES_HOME/consolidating_memory_wiki';
+      wikiDir = wikiRel.replace('$HERMES_HOME', wsl.linuxPath);
+      // Cache for next time
+      cachedWsl = wsl;
+      cachedDbPath = linuxDbPath;
+      cachedWikiDir = wikiDir;
+    }
 
-    let dbRelative = pluginCfg.db_path || '$HERMES_HOME/consolidating_memory.db';
-    const linuxDbPath = dbRelative.replace('$HERMES_HOME', wsl.linuxPath);
-
-    // For wiki queries, resolve wiki dir
+    // For wiki queries, inject the wiki dir
     if (queryType === 'wiki_list' || queryType === 'wiki_read') {
-      let wikiDir = pluginCfg.wiki_export_dir || '$HERMES_HOME/consolidating_memory_wiki';
-      wikiDir = wikiDir.replace('$HERMES_HOME', wsl.linuxPath);
       if (!queryArgs) queryArgs = {};
       if (queryType === 'wiki_list') queryArgs.wiki_dir = wikiDir;
       if (queryType === 'wiki_read' && queryArgs.file) {
@@ -127,14 +167,14 @@ ipcMain.handle('db-query', async (_e, hermesHome, queryType, queryArgs) => {
       }
     }
 
-    const scriptPath = wslTempScript();
+    const scriptPath = ensureScript();
     const argsJson = JSON.stringify(queryArgs || {});
     const argsTmp = path.join(os.tmpdir(), 'hmc_args.json');
     fs.writeFileSync(argsTmp, argsJson, 'utf-8');
     const argsWsl = argsTmp.replace(/^([A-Z]):/i, (_, d) => `/mnt/${d.toLowerCase()}`).replace(/\\/g, '/');
     const cmd = `wsl -e python3 "${scriptPath}" "${linuxDbPath}" "${queryType}" "${argsWsl}"`;
-    const out = execSync(cmd, { timeout: 20000, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }).trim();
-    return JSON.parse(out);
+    const out = await execAsync(cmd, { timeout: 20000, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
+    return JSON.parse(out.trim());
   } catch (e) {
     return { error: e.message };
   }

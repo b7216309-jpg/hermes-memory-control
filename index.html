@@ -98,6 +98,12 @@ input[type=number]{-moz-appearance:textfield;}
 .box-body{padding:5px 10px 4px 12px;flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;gap:2px;margin-top:13px;min-width:0;width:100%;}
 .s-row{display:grid;grid-template-columns:110px 1fr;align-items:center;gap:6px;min-height:18px;flex-shrink:0;}
 .s-lbl{font-size:10px;color:var(--fg2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.s-lbl[data-tip]{position:relative;cursor:help;border-bottom:1px dotted var(--fg3);}
+.s-lbl[data-tip]:hover::after{content:attr(data-tip);position:absolute;left:0;bottom:calc(100% + 6px);z-index:9999;
+  min-width:180px;max-width:320px;padding:6px 10px;font-size:10px;line-height:1.45;font-family:var(--f);
+  color:var(--wh);background:var(--bg1);border:1px solid var(--bdr);border-radius:3px;
+  white-space:normal;word-wrap:break-word;pointer-events:none;
+  box-shadow:0 4px 16px rgba(0,0,0,.55);animation:tipFade .12s ease;}
 .s-num{background:var(--bg2);color:var(--fg);border:1px solid var(--bdr);font-family:var(--f);font-size:10px;padding:2px 6px;outline:none;width:100%;}
 .s-num:focus{border-color:var(--or);}
 .s-text{background:var(--bg2);color:var(--fg);border:1px solid var(--bdr);font-family:var(--f);font-size:10px;padding:2px 6px;outline:none;width:100%;}
@@ -137,6 +143,7 @@ input[type=number]{-moz-appearance:textfield;}
 .b-dm{color:var(--fg2);border-color:var(--bdr);}
 .gap-6{height:6px;flex-shrink:0;}.gap-4{height:4px;flex-shrink:0;}
 @keyframes flash-gr{0%,100%{border-color:var(--bdr)}40%,60%{border-color:var(--gr);box-shadow:inset 0 0 0 1px var(--gr)}}
+@keyframes tipFade{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
 .a-saved{animation:flash-gr .4s ease 2;}
 
 /* ── table ── */
@@ -468,81 +475,81 @@ input[type=number]{-moz-appearance:textfield;}
 
       <div class="cfg-panel active" id="cfg-consolidation">
         <div class="sec">consolidation gate</div>
-        <div class="s-row"><span class="s-lbl">min_hours</span><input class="s-num" type="number" data-key="min_hours" min="1" max="720"></div>
-        <div class="s-row"><span class="s-lbl">min_sessions</span><input class="s-num" type="number" data-key="min_sessions" min="1" max="100"></div>
-        <div class="s-row"><span class="s-lbl">scan_cooldown_s</span><input class="s-num" type="number" data-key="scan_cooldown_seconds" min="60" max="7200"></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Minimum hours between two consolidation runs. Lower = more frequent memory updates.">min_hours</span><input class="s-num" type="number" data-key="min_hours" min="1" max="720"></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Minimum closed sessions required before consolidation triggers. Prevents running on too little data.">min_sessions</span><input class="s-num" type="number" data-key="min_sessions" min="1" max="100"></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Cooldown in seconds between background scans checking if consolidation is needed.">scan_cooldown_s</span><input class="s-num" type="number" data-key="scan_cooldown_seconds" min="60" max="7200"></div>
         <div class="div"></div>
         <div class="sec">topic clustering</div>
-        <div class="s-row"><span class="s-lbl">max_topic_facts</span><input class="s-num" type="number" data-key="max_topic_facts" min="1" max="20"></div>
-        <div class="s-row"><span class="s-lbl">topic_summary_ch</span><input class="s-num" type="number" data-key="topic_summary_chars" min="100" max="2000"></div>
-        <div class="s-row"><span class="s-lbl">session_summ_ch</span><input class="s-num" type="number" data-key="session_summary_chars" min="100" max="2000"></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Maximum number of facts that can belong to a single topic cluster. Prevents mega-topics.">max_topic_facts</span><input class="s-num" type="number" data-key="max_topic_facts" min="1" max="20"></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Character limit for generated topic summaries. Longer = more detailed but uses more context window.">topic_summary_ch</span><input class="s-num" type="number" data-key="topic_summary_chars" min="100" max="2000"></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Character limit for session summaries generated during consolidation.">session_summ_ch</span><input class="s-num" type="number" data-key="session_summary_chars" min="100" max="2000"></div>
         <div class="div"></div>
         <div class="sec">pruning</div>
-        <div class="s-row"><span class="s-lbl">prune_after_days</span><input class="s-num" type="number" data-key="prune_after_days" min="7" max="365"></div>
-        <div class="s-row"><span class="s-lbl">episode_retain_h</span><input class="s-num" type="number" data-key="episode_body_retention_hours" min="1" max="168"></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Days after which inactive facts with low salience are permanently pruned from the database.">prune_after_days</span><input class="s-num" type="number" data-key="prune_after_days" min="7" max="365"></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Hours to keep raw episode bodies before stripping them. After this, only the extracted facts remain.">episode_retain_h</span><input class="s-num" type="number" data-key="episode_body_retention_hours" min="1" max="168"></div>
         <div class="div"></div>
         <div class="sec">storage</div>
-        <div class="s-row"><span class="s-lbl">db_path</span><input class="s-text" data-key="db_path" spellcheck="false"></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Path to the SQLite database file. Use $HERMES_HOME for the agent home directory.">db_path</span><input class="s-text" data-key="db_path" spellcheck="false"></div>
         <div class="gap-6"></div>
         <div style="display:flex;gap:6px;"><button class="s-btn-full btn-gr save-btn" style="flex:1">SAVE</button><button class="s-btn-full btn-rd revert-btn" style="flex:1">REVERT</button></div>
       </div>
 
       <div class="cfg-panel" id="cfg-retrieval">
         <div class="sec">retrieval backend</div>
-        <div class="s-row"><span class="s-lbl">backend</span><select class="s-sel" data-key="retrieval_backend"><option value="fts">fts</option><option value="hybrid">hybrid</option></select></div>
-        <div class="s-row"><span class="s-lbl">prefetch_limit</span><input class="s-num" type="number" data-key="prefetch_limit" min="1" max="30"></div>
-        <div class="s-row"><span class="s-lbl">embed_cand_limit</span><input class="s-num" type="number" data-key="embedding_candidate_limit" min="4" max="64"></div>
+        <div class="s-row"><span class="s-lbl" data-tip="How facts are retrieved during conversation. 'fts' = full-text search only, 'hybrid' = FTS + embedding similarity.">backend</span><select class="s-sel" data-key="retrieval_backend"><option value="fts">fts</option><option value="hybrid">hybrid</option></select></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Number of candidate facts to prefetch from FTS before ranking. Higher = better recall, slower retrieval.">prefetch_limit</span><input class="s-num" type="number" data-key="prefetch_limit" min="1" max="30"></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Number of embedding candidates to consider in hybrid mode. Only used when backend is 'hybrid'.">embed_cand_limit</span><input class="s-num" type="number" data-key="embedding_candidate_limit" min="4" max="64"></div>
         <div class="div"></div>
         <div class="sec">extraction</div>
-        <div class="s-row"><span class="s-lbl">extractor</span><select class="s-sel" data-key="extractor_backend"><option value="heuristic">heuristic</option><option value="hybrid">hybrid</option><option value="llm">llm</option></select></div>
+        <div class="s-row"><span class="s-lbl" data-tip="How facts are extracted from conversations. 'heuristic' = rule-based (fast, no API), 'hybrid' = rules + LLM, 'llm' = LLM only.">extractor</span><select class="s-sel" data-key="extractor_backend"><option value="heuristic">heuristic</option><option value="hybrid">hybrid</option><option value="llm">llm</option></select></div>
         <div class="gap-6"></div>
         <div style="display:flex;gap:6px;"><button class="s-btn-full btn-gr save-btn" style="flex:1">SAVE</button><button class="s-btn-full btn-rd revert-btn" style="flex:1">REVERT</button></div>
       </div>
 
       <div class="cfg-panel" id="cfg-snapshot">
         <div class="sec">builtin snapshot sync</div>
-        <div class="s-row"><span class="s-lbl">enabled</span><div class="s-check"><label><input type="checkbox" data-key="builtin_snapshot_sync_enabled"><span class="chk"></span></label></div></div>
-        <div class="s-row"><span class="s-lbl">memory_dir</span><input class="s-text" data-key="builtin_memory_dir" spellcheck="false"></div>
-        <div class="s-row"><span class="s-lbl">user_chars</span><input class="s-num" type="number" data-key="builtin_snapshot_user_chars" min="200" max="8000"></div>
-        <div class="s-row"><span class="s-lbl">memory_chars</span><input class="s-num" type="number" data-key="builtin_snapshot_memory_chars" min="200" max="8000"></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Enable syncing consolidated memory into USER.md and MEMORY.md snapshot files used by Hermes builtin memory.">enabled</span><div class="s-check"><label><input type="checkbox" data-key="builtin_snapshot_sync_enabled"><span class="chk"></span></label></div></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Directory containing the builtin memory files (USER.md, MEMORY.md). Usually $HERMES_HOME/memories.">memory_dir</span><input class="s-text" data-key="builtin_memory_dir" spellcheck="false"></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Character budget for USER.md snapshot. Controls how much personal info fits in the builtin memory file.">user_chars</span><input class="s-num" type="number" data-key="builtin_snapshot_user_chars" min="200" max="8000"></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Character budget for MEMORY.md snapshot. Controls how many facts/topics fit in the builtin memory file.">memory_chars</span><input class="s-num" type="number" data-key="builtin_snapshot_memory_chars" min="200" max="8000"></div>
         <div class="gap-6"></div>
         <div style="display:flex;gap:6px;"><button class="s-btn-full btn-gr save-btn" style="flex:1">SAVE</button><button class="s-btn-full btn-rd revert-btn" style="flex:1">REVERT</button></div>
       </div>
 
       <div class="cfg-panel" id="cfg-wiki">
         <div class="sec">compiled wiki export</div>
-        <div class="s-row"><span class="s-lbl">enabled</span><div class="s-check"><label><input type="checkbox" data-key="wiki_export_enabled"><span class="chk"></span></label></div></div>
-        <div class="s-row"><span class="s-lbl">export_dir</span><input class="s-text" data-key="wiki_export_dir" spellcheck="false"></div>
-        <div class="s-row"><span class="s-lbl">on_consolidate</span><div class="s-check"><label><input type="checkbox" data-key="wiki_export_on_consolidate"><span class="chk"></span></label></div></div>
-        <div class="s-row"><span class="s-lbl">session_limit</span><input class="s-num" type="number" data-key="wiki_export_session_limit" min="1" max="500"></div>
-        <div class="s-row"><span class="s-lbl">topic_limit</span><input class="s-num" type="number" data-key="wiki_export_topic_limit" min="1" max="500"></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Enable exporting the memory database as a browsable markdown wiki.">enabled</span><div class="s-check"><label><input type="checkbox" data-key="wiki_export_enabled"><span class="chk"></span></label></div></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Directory where wiki markdown files are written. Use $HERMES_HOME prefix for relative paths.">export_dir</span><input class="s-text" data-key="wiki_export_dir" spellcheck="false"></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Automatically regenerate the wiki after each consolidation run.">on_consolidate</span><div class="s-check"><label><input type="checkbox" data-key="wiki_export_on_consolidate"><span class="chk"></span></label></div></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Maximum number of sessions to include in the wiki export.">session_limit</span><input class="s-num" type="number" data-key="wiki_export_session_limit" min="1" max="500"></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Maximum number of topics to include in the wiki export.">topic_limit</span><input class="s-num" type="number" data-key="wiki_export_topic_limit" min="1" max="500"></div>
         <div class="gap-6"></div>
         <div style="display:flex;gap:6px;"><button class="s-btn-full btn-gr save-btn" style="flex:1">SAVE</button><button class="s-btn-full btn-rd revert-btn" style="flex:1">REVERT</button></div>
       </div>
 
       <div class="cfg-panel" id="cfg-llm">
         <div class="sec">llm backend</div>
-        <div class="s-row"><span class="s-lbl">llm_model</span><input class="s-text" data-key="llm_model" spellcheck="false"></div>
-        <div class="s-row"><span class="s-lbl">llm_base_url</span><input class="s-text" data-key="llm_base_url" spellcheck="false"></div>
-        <div class="s-row"><span class="s-lbl">llm_timeout_s</span><input class="s-num" type="number" data-key="llm_timeout_seconds" min="5" max="300"></div>
-        <div class="s-row"><span class="s-lbl">llm_max_input</span><input class="s-num" type="number" data-key="llm_max_input_chars" min="500" max="32000"></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Model name for LLM calls (consolidation, extraction, summaries). Leave empty to use the agent's default model.">llm_model</span><input class="s-text" data-key="llm_model" spellcheck="false"></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Base URL for the LLM API endpoint. Leave empty for the default provider. Useful for local models (e.g. Ollama).">llm_base_url</span><input class="s-text" data-key="llm_base_url" spellcheck="false"></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Timeout in seconds for LLM API calls. Increase for slow models or complex consolidation tasks.">llm_timeout_s</span><input class="s-num" type="number" data-key="llm_timeout_seconds" min="5" max="300"></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Maximum input characters sent to the LLM per call. Limits context size to control costs and latency.">llm_max_input</span><input class="s-num" type="number" data-key="llm_max_input_chars" min="500" max="32000"></div>
         <div class="div"></div>
         <div class="sec">embedding</div>
-        <div class="s-row"><span class="s-lbl">embed_model</span><input class="s-text" data-key="embedding_model" spellcheck="false"></div>
-        <div class="s-row"><span class="s-lbl">embed_base_url</span><input class="s-text" data-key="embedding_base_url" spellcheck="false"></div>
-        <div class="s-row"><span class="s-lbl">embed_timeout_s</span><input class="s-num" type="number" data-key="embedding_timeout_seconds" min="5" max="120"></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Model name for embedding generation. Only used when retrieval_backend is 'hybrid'. Leave empty for default.">embed_model</span><input class="s-text" data-key="embedding_model" spellcheck="false"></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Base URL for the embedding API endpoint. Leave empty for default. Point to local embedding server if self-hosting.">embed_base_url</span><input class="s-text" data-key="embedding_base_url" spellcheck="false"></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Timeout in seconds for embedding API calls. Embeddings are usually fast; 20s is generous.">embed_timeout_s</span><input class="s-num" type="number" data-key="embedding_timeout_seconds" min="5" max="120"></div>
         <div class="gap-6"></div>
         <div style="display:flex;gap:6px;"><button class="s-btn-full btn-gr save-btn" style="flex:1">SAVE</button><button class="s-btn-full btn-rd revert-btn" style="flex:1">REVERT</button></div>
       </div>
 
       <div class="cfg-panel" id="cfg-decay">
         <div class="sec">salience decay</div>
-        <div class="s-row"><span class="s-lbl">half_life_days</span><input class="s-num" type="number" data-key="decay_half_life_days" min="7" max="365"></div>
-        <div class="s-row"><span class="s-lbl">min_salience</span><input class="s-num" type="number" data-key="decay_min_salience" min="0.01" max="0.5" step="0.01"></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Number of days for a fact's salience to drop to 50%. Longer = memories stay relevant longer. Shorter = faster forgetting.">half_life_days</span><input class="s-num" type="number" data-key="decay_half_life_days" min="7" max="365"></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Floor value for salience decay. Facts never drop below this. Prevents complete forgetting of old but valid memories.">min_salience</span><input class="s-num" type="number" data-key="decay_min_salience" min="0.01" max="0.5" step="0.01"></div>
         <div class="div"></div>
         <div class="sec">spaced review</div>
-        <div class="s-row"><span class="s-lbl">reconsol_win_h</span><input class="s-num" type="number" data-key="reconsolidation_window_hours" min="1" max="48"></div>
-        <div class="s-row"><span class="s-lbl">review_intervals</span><input class="s-text" data-key="review_intervals_days" spellcheck="false"></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Hours after consolidation during which a fact can be reconsolidated (updated/merged) if mentioned again.">reconsol_win_h</span><input class="s-num" type="number" data-key="reconsolidation_window_hours" min="1" max="48"></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Comma-separated day intervals for spaced review of important facts. Based on spaced repetition principles.">review_intervals</span><input class="s-text" data-key="review_intervals_days" spellcheck="false"></div>
         <div class="gap-6"></div>
         <div style="display:flex;gap:6px;"><button class="s-btn-full btn-gr save-btn" style="flex:1">SAVE</button><button class="s-btn-full btn-rd revert-btn" style="flex:1">REVERT</button></div>
       </div>

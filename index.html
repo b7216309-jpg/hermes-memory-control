@@ -98,11 +98,11 @@ input[type=number]{-moz-appearance:textfield;}
 .box-body{padding:5px 10px 4px 12px;flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;gap:2px;margin-top:13px;min-width:0;width:100%;}
 .s-row{display:grid;grid-template-columns:110px 1fr;align-items:center;gap:6px;min-height:18px;flex-shrink:0;}
 .s-lbl{font-size:10px;color:var(--fg2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.s-lbl[data-tip]{position:relative;cursor:help;border-bottom:1px dotted var(--fg3);}
-.s-lbl[data-tip]:hover::after{content:attr(data-tip);position:absolute;left:0;bottom:calc(100% + 6px);z-index:9999;
+.s-lbl[data-tip]{cursor:help;border-bottom:1px dotted var(--fg3);}
+#cfg-tooltip{position:fixed;z-index:99999;pointer-events:none;display:none;
   min-width:180px;max-width:320px;padding:6px 10px;font-size:10px;line-height:1.45;font-family:var(--f);
   color:var(--wh);background:var(--bg1);border:1px solid var(--bdr);border-radius:3px;
-  white-space:normal;word-wrap:break-word;pointer-events:none;
+  white-space:normal;word-wrap:break-word;
   box-shadow:0 4px 16px rgba(0,0,0,.55);animation:tipFade .12s ease;}
 .s-num{background:var(--bg2);color:var(--fg);border:1px solid var(--bdr);font-family:var(--f);font-size:10px;padding:2px 6px;outline:none;width:100%;}
 .s-num:focus{border-color:var(--or);}
@@ -223,6 +223,18 @@ input[type=number]{-moz-appearance:textfield;}
 .cfg-tab:hover{color:var(--wh);}.cfg-tab.active{color:var(--cy);border-bottom-color:var(--cy);font-weight:700;}
 .cfg-panel{display:none;flex:1;flex-direction:column;overflow-y:auto;padding:8px 12px;gap:3px;}
 .cfg-panel.active{display:flex;}
+.llm-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-bottom:4px;}
+.llm-card{border:1px solid var(--bdr);background:var(--bg1);padding:6px 8px;display:flex;flex-direction:column;gap:4px;}
+.llm-card .sec{margin-top:0;}
+.llm-card .kv{gap:8px;align-items:flex-start;}
+.llm-card .kv .v{max-width:100%;text-align:right;white-space:normal;word-break:break-word;overflow-wrap:anywhere;}
+.llm-actions{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:4px;}
+.llm-note{border:1px solid var(--bdr);background:var(--bg1);padding:6px 8px;display:flex;flex-direction:column;gap:4px;}
+.llm-note .kv{gap:8px;align-items:flex-start;}
+.llm-note .kv .v{max-width:100%;text-align:right;white-space:normal;word-break:break-word;overflow-wrap:anywhere;}
+@media (max-width: 980px){
+  .llm-grid{grid-template-columns:1fr;}
+}
 </style>
 <script>
 (()=>{try{const s=JSON.parse(localStorage.getItem('hmc-settings')||'{}');document.documentElement.setAttribute('data-ui-theme',s.uiTheme||'gruvbox');}catch{}})();
@@ -528,16 +540,56 @@ input[type=number]{-moz-appearance:textfield;}
       </div>
 
       <div class="cfg-panel" id="cfg-llm">
+        <div class="llm-grid">
+          <div class="llm-card">
+            <div class="sec">effective routing</div>
+            <div class="kv"><span class="k">extractor</span><span class="v" id="llm-effective-extractor">--</span></div>
+            <div class="kv"><span class="k">retrieval</span><span class="v" id="llm-effective-retrieval">--</span></div>
+            <div class="kv"><span class="k">LLM endpoint</span><span class="v" id="llm-effective-kind">--</span></div>
+            <div class="kv"><span class="k">embedding endpoint</span><span class="v" id="llm-effective-embed-kind">--</span></div>
+            <div class="s-note" id="llm-routing-note">Connect to Hermes to see the effective backend behavior.</div>
+          </div>
+          <div class="llm-card">
+            <div class="sec">Hermes defaults</div>
+            <div class="kv"><span class="k">model.default</span><span class="v" id="llm-default-model">--</span></div>
+            <div class="kv"><span class="k">model.base_url</span><span class="v" id="llm-default-base">--</span></div>
+            <div class="s-note">Leaving model or base URL blank here inherits from Hermes `model.default` and `model.base_url` when available.</div>
+          </div>
+        </div>
+
+        <div class="sec">quick fill</div>
+        <div class="llm-actions">
+          <button class="s-btn btn-cy" id="btn-llm-copy-hermes">COPY HERMES</button>
+          <button class="s-btn" id="btn-llm-inherit">INHERIT</button>
+          <button class="s-btn" id="btn-llm-preset-openai">OPENAI</button>
+          <button class="s-btn" id="btn-llm-preset-lmstudio">LM STUDIO</button>
+          <button class="s-btn" id="btn-llm-preset-ollama">OLLAMA</button>
+        </div>
+
         <div class="sec">llm backend</div>
-        <div class="s-row"><span class="s-lbl" data-tip="Model name for LLM calls (consolidation, extraction, summaries). Leave empty to use the agent's default model.">llm_model</span><input class="s-text" data-key="llm_model" spellcheck="false"></div>
-        <div class="s-row"><span class="s-lbl" data-tip="Base URL for the LLM API endpoint. Leave empty for the default provider. Useful for local models (e.g. Ollama).">llm_base_url</span><input class="s-text" data-key="llm_base_url" spellcheck="false"></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Model name for LLM calls (consolidation, extraction, summaries). Leave empty to inherit Hermes model.default.">llm_model</span><input class="s-text" id="cfg-llm-model" data-key="llm_model" spellcheck="false"></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Base URL for the LLM API endpoint. Leave empty to inherit Hermes model.base_url. Local OpenAI-compatible servers such as LM Studio or Ollama usually expose /v1.">llm_base_url</span><input class="s-text" id="cfg-llm-base-url" data-key="llm_base_url" spellcheck="false"></div>
         <div class="s-row"><span class="s-lbl" data-tip="Timeout in seconds for LLM API calls. Increase for slow models or complex consolidation tasks.">llm_timeout_s</span><input class="s-num" type="number" data-key="llm_timeout_seconds" min="5" max="300"></div>
         <div class="s-row"><span class="s-lbl" data-tip="Maximum input characters sent to the LLM per call. Limits context size to control costs and latency.">llm_max_input</span><input class="s-num" type="number" data-key="llm_max_input_chars" min="500" max="32000"></div>
+        <div class="s-note">If the effective base URL contains `/backend-api/codex`, the plugin uses the Codex `/responses` API. Otherwise it uses OpenAI-compatible `/chat/completions`.</div>
         <div class="div"></div>
         <div class="sec">embedding</div>
-        <div class="s-row"><span class="s-lbl" data-tip="Model name for embedding generation. Only used when retrieval_backend is 'hybrid'. Leave empty for default.">embed_model</span><input class="s-text" data-key="embedding_model" spellcheck="false"></div>
-        <div class="s-row"><span class="s-lbl" data-tip="Base URL for the embedding API endpoint. Leave empty for default. Point to local embedding server if self-hosting.">embed_base_url</span><input class="s-text" data-key="embedding_base_url" spellcheck="false"></div>
+        <div class="llm-actions">
+          <button class="s-btn btn-cy" id="btn-embed-copy-llm">MATCH LLM</button>
+          <button class="s-btn" id="btn-embed-copy-hermes">COPY HERMES</button>
+          <button class="s-btn" id="btn-embed-inherit">INHERIT</button>
+        </div>
+        <div class="s-row"><span class="s-lbl" data-tip="Model name for embedding generation. Only used when retrieval_backend is 'hybrid'. Leave empty to reuse the effective LLM model or Hermes default.">embed_model</span><input class="s-text" id="cfg-embedding-model" data-key="embedding_model" spellcheck="false"></div>
+        <div class="s-row"><span class="s-lbl" data-tip="Base URL for the embedding API endpoint. Leave empty to reuse the effective LLM base URL or Hermes default. Point to a dedicated embedding server if self-hosting.">embed_base_url</span><input class="s-text" id="cfg-embedding-base-url" data-key="embedding_base_url" spellcheck="false"></div>
         <div class="s-row"><span class="s-lbl" data-tip="Timeout in seconds for embedding API calls. Embeddings are usually fast; 20s is generous.">embed_timeout_s</span><input class="s-num" type="number" data-key="embedding_timeout_seconds" min="5" max="120"></div>
+        <div class="s-note">Hybrid retrieval needs a real embeddings endpoint. Codex-style `/responses` backends do not expose embeddings, so hybrid retrieval will fall back to FTS in that case.</div>
+        <div class="div"></div>
+        <div class="llm-note">
+          <div class="sec">credentials</div>
+          <div class="kv"><span class="k">LLM API key env</span><span class="v">CONSOLIDATING_MEMORY_LLM_API_KEY</span></div>
+          <div class="kv"><span class="k">embedding API key env</span><span class="v">CONSOLIDATING_MEMORY_EMBEDDING_API_KEY</span></div>
+          <div class="s-note">The plugin reads credentials from environment variables at Hermes runtime, not from `config.yaml`, so this app can guide them but does not store secrets.</div>
+        </div>
         <div class="gap-6"></div>
         <div style="display:flex;gap:6px;"><button class="s-btn-full btn-gr save-btn" style="flex:1">SAVE</button><button class="s-btn-full btn-rd revert-btn" style="flex:1">REVERT</button></div>
       </div>
@@ -581,9 +633,37 @@ input[type=number]{-moz-appearance:textfield;}
 
 </div><!-- /app -->
 
+<div id="cfg-tooltip"></div>
+
 <script>window.THREE = require('three');</script>
 <script src="renderer/core.js"></script>
 <script src="renderer/graph3d.js"></script>
 <script src="renderer/wiki.js"></script>
+<script>
+(function(){
+  const tip = document.getElementById('cfg-tooltip');
+  let hideTimer = null;
+  document.addEventListener('mouseover', e => {
+    const lbl = e.target.closest('.s-lbl[data-tip]');
+    if (!lbl) return;
+    clearTimeout(hideTimer);
+    tip.textContent = lbl.getAttribute('data-tip');
+    tip.style.display = 'block';
+    const r = lbl.getBoundingClientRect();
+    let top = r.top - tip.offsetHeight - 6;
+    let left = r.left;
+    if (top < 4) top = r.bottom + 6;
+    if (left + tip.offsetWidth > window.innerWidth - 8) left = window.innerWidth - tip.offsetWidth - 8;
+    if (left < 4) left = 4;
+    tip.style.top = top + 'px';
+    tip.style.left = left + 'px';
+  });
+  document.addEventListener('mouseout', e => {
+    const lbl = e.target.closest('.s-lbl[data-tip]');
+    if (!lbl) return;
+    hideTimer = setTimeout(() => { tip.style.display = 'none'; }, 80);
+  });
+})();
+</script>
 </body>
 </html>

@@ -18,12 +18,149 @@ const DEFAULTS = {
 let hermesHome = '';
 let pluginCfg = {};
 let savedPluginCfg = {};
+let hermesModelDefaults = { model: '', base_url: '' };
 
 const $ = s => document.querySelector(s);
 const $$ = s => document.querySelectorAll(s);
+const cfgField = key => document.querySelector(`[data-key="${key}"]`);
 
 function loadApp() { try { return JSON.parse(localStorage.getItem('hmc-settings')||'{}'); } catch { return {}; } }
 function saveApp(o) { const c = loadApp(); Object.assign(c, o); localStorage.setItem('hmc-settings', JSON.stringify(c)); }
+
+function setNodeText(selector, value) {
+  const el = $(selector);
+  if (el) el.textContent = value;
+}
+
+function setCfgValue(key, value) {
+  const el = cfgField(key);
+  if (!el) return;
+  if (el.type === 'checkbox') el.checked = !!value;
+  else el.value = value ?? '';
+}
+
+function isCodexBackendUrl(url) {
+  return String(url || '').trim().toLowerCase().includes('/backend-api/codex');
+}
+
+function detectEndpointKind(url) {
+  const clean = String(url || '').trim();
+  if (!clean) return 'disabled';
+  const lowered = clean.toLowerCase();
+  if (lowered.includes('/backend-api/codex')) return 'codex /responses';
+  if (lowered.includes('/v1')) return 'openai-compatible /v1';
+  return 'custom openai-compatible';
+}
+
+function refreshLlmUi() {
+  const llmModelRaw = String(cfgField('llm_model')?.value || '').trim();
+  const llmBaseRaw = String(cfgField('llm_base_url')?.value || '').trim();
+  const embedModelRaw = String(cfgField('embedding_model')?.value || '').trim();
+  const embedBaseRaw = String(cfgField('embedding_base_url')?.value || '').trim();
+  const extractor = String(cfgField('extractor_backend')?.value || pluginCfg.extractor_backend || DEFAULTS.extractor_backend || 'hybrid').trim().toLowerCase();
+  const retrieval = String(cfgField('retrieval_backend')?.value || pluginCfg.retrieval_backend || DEFAULTS.retrieval_backend || 'fts').trim().toLowerCase();
+
+  const defaultModel = String(hermesModelDefaults.model || '').trim();
+  const defaultBase = String(hermesModelDefaults.base_url || '').trim();
+  const effectiveLlmModel = llmModelRaw || defaultModel;
+  const effectiveLlmBase = llmBaseRaw || defaultBase;
+  const effectiveEmbedModel = embedModelRaw || effectiveLlmModel;
+  const effectiveEmbedBase = embedBaseRaw || effectiveLlmBase;
+  const llmReady = !!(effectiveLlmModel && effectiveLlmBase);
+  const embeddingsReady = !!(effectiveEmbedModel && effectiveEmbedBase) && !isCodexBackendUrl(effectiveEmbedBase);
+
+  setNodeText('#llm-default-model', defaultModel || 'not found');
+  setNodeText('#llm-default-base', defaultBase || 'not found');
+  setNodeText('#llm-effective-extractor', extractor || '--');
+  setNodeText('#llm-effective-retrieval', retrieval === 'hybrid' && !embeddingsReady ? 'hybrid -> fts fallback' : retrieval || '--');
+  setNodeText('#llm-effective-kind', llmReady ? `${detectEndpointKind(effectiveLlmBase)} :: ${effectiveLlmModel}` : 'not configured');
+  setNodeText('#llm-effective-embed-kind', effectiveEmbedModel && effectiveEmbedBase
+    ? `${detectEndpointKind(effectiveEmbedBase)} :: ${effectiveEmbedModel}${isCodexBackendUrl(effectiveEmbedBase) ? ' (no embeddings)' : ''}`
+    : 'inherits / disabled');
+
+  let note = '';
+  if (extractor === 'heuristic') {
+    note = 'Extraction is heuristic-only right now, so the LLM endpoint will stay idle until extractor_backend is hybrid or llm.';
+  } else if (!llmReady) {
+    note = 'Extractor is set to use LLM assistance, but no effective model/base URL is available. The plugin will fall back to heuristic extraction.';
+  } else if (isCodexBackendUrl(effectiveLlmBase)) {
+    note = 'Extraction will use the Codex /responses API with the effective model shown above.';
+  } else {
+    note = 'Extraction will use an OpenAI-compatible /chat/completions endpoint with the effective model shown above.';
+  }
+
+  if (retrieval === 'hybrid') {
+    if (!embeddingsReady) note += ' Hybrid retrieval will fall back to FTS because embeddings are not effectively configured or the endpoint is Codex-only.';
+    else note += ' Hybrid retrieval can use embeddings with the effective embedding settings below.';
+  } else {
+    note += ' Retrieval is currently FTS-only.';
+  }
+  setNodeText('#llm-routing-note', note);
+
+  const llmModelEl = $('#cfg-llm-model');
+  const llmBaseEl = $('#cfg-llm-base-url');
+  const embedModelEl = $('#cfg-embedding-model');
+  const embedBaseEl = $('#cfg-embedding-base-url');
+  if (llmModelEl) llmModelEl.placeholder = defaultModel || 'inherit from Hermes model.default';
+  if (llmBaseEl) llmBaseEl.placeholder = defaultBase || 'inherit from Hermes model.base_url';
+  if (embedModelEl) embedModelEl.placeholder = llmModelRaw || defaultModel || 'reuse effective LLM model';
+  if (embedBaseEl) embedBaseEl.placeholder = llmBaseRaw || defaultBase || 'reuse effective LLM base URL';
+}
+
+function applyLlmBasePreset(label, baseUrl) {
+  setCfgValue('llm_base_url', baseUrl);
+  refreshLlmUi();
+  setStatus(`${label} base URL filled`, 'cy');
+}
+
+function copyHermesDefaultsToLlm() {
+  if (!hermesModelDefaults.model && !hermesModelDefaults.base_url) {
+    setStatus('Hermes defaults not found', 'rd');
+    return;
+  }
+  setCfgValue('llm_model', hermesModelDefaults.model || '');
+  setCfgValue('llm_base_url', hermesModelDefaults.base_url || '');
+  refreshLlmUi();
+  setStatus('Hermes defaults copied to LLM', 'gr');
+}
+
+function inheritLlmSettings() {
+  setCfgValue('llm_model', '');
+  setCfgValue('llm_base_url', '');
+  refreshLlmUi();
+  setStatus('LLM overrides cleared', 'am');
+}
+
+function copyEffectiveLlmToEmbeddings() {
+  const model = String(cfgField('llm_model')?.value || hermesModelDefaults.model || '').trim();
+  const base = String(cfgField('llm_base_url')?.value || hermesModelDefaults.base_url || '').trim();
+  if (!model && !base) {
+    setStatus('No effective LLM settings to copy', 'rd');
+    return;
+  }
+  setCfgValue('embedding_model', model);
+  setCfgValue('embedding_base_url', base);
+  refreshLlmUi();
+  setStatus('Embedding settings matched to LLM', 'gr');
+}
+
+function copyHermesDefaultsToEmbeddings() {
+  if (!hermesModelDefaults.model && !hermesModelDefaults.base_url) {
+    setStatus('Hermes defaults not found', 'rd');
+    return;
+  }
+  setCfgValue('embedding_model', hermesModelDefaults.model || '');
+  setCfgValue('embedding_base_url', hermesModelDefaults.base_url || '');
+  refreshLlmUi();
+  setStatus('Hermes defaults copied to embeddings', 'gr');
+}
+
+function inheritEmbeddingSettings() {
+  setCfgValue('embedding_model', '');
+  setCfgValue('embedding_base_url', '');
+  refreshLlmUi();
+  setStatus('Embedding overrides cleared', 'am');
+}
 
 /* ── theme ── */
 const themeSel = $('#theme-sel');
@@ -66,6 +203,7 @@ function populateForm() {
     else if (el.tagName === 'SELECT') el.value = String(val || '');
     else el.value = val ?? '';
   });
+  refreshLlmUi();
 }
 function readForm() {
   $$('[data-key]').forEach(el => {
@@ -93,6 +231,10 @@ async function connect() {
   if (result.error) { setStatus('error', 'rd'); return; }
   pluginCfg = { ...DEFAULTS, ...result.config };
   savedPluginCfg = { ...pluginCfg };
+  hermesModelDefaults = {
+    model: String(result.fullConfig?.model?.default || ''),
+    base_url: String(result.fullConfig?.model?.base_url || ''),
+  };
   populateForm();
   setStatus('connected', 'gr');
   $('#sb-config').textContent = result.configPath || 'loaded';
@@ -178,6 +320,7 @@ $('#btn-preset-delete')?.addEventListener('click', () => {
 });
 
 refreshPresetList();
+refreshLlmUi();
 
 /* ── detail panel ── */
 function showDetail(title, kvPairs) {
@@ -474,11 +617,23 @@ $('#btn-load-topics').addEventListener('click', loadTopics);
 $('#btn-load-sessions').addEventListener('click', loadSessions);
 $('#btn-load-prefs').addEventListener('click', loadPrefs);
 $('#btn-load-contra').addEventListener('click', loadContra);
+$('#btn-llm-copy-hermes')?.addEventListener('click', copyHermesDefaultsToLlm);
+$('#btn-llm-inherit')?.addEventListener('click', inheritLlmSettings);
+$('#btn-llm-preset-openai')?.addEventListener('click', () => applyLlmBasePreset('OpenAI', 'https://api.openai.com/v1'));
+$('#btn-llm-preset-lmstudio')?.addEventListener('click', () => applyLlmBasePreset('LM Studio', 'http://127.0.0.1:1234/v1'));
+$('#btn-llm-preset-ollama')?.addEventListener('click', () => applyLlmBasePreset('Ollama', 'http://127.0.0.1:11434/v1'));
+$('#btn-embed-copy-llm')?.addEventListener('click', copyEffectiveLlmToEmbeddings);
+$('#btn-embed-copy-hermes')?.addEventListener('click', copyHermesDefaultsToEmbeddings);
+$('#btn-embed-inherit')?.addEventListener('click', inheritEmbeddingSettings);
 $('#detail-close').addEventListener('click', () => $('#detail-panel').classList.remove('open'));
 $('#hermes-path').addEventListener('keydown', e => { if (e.key === 'Enter') connect(); });
 $('#fact-search').addEventListener('keydown', e => { if (e.key === 'Enter') loadFacts(); });
 $$('.save-btn').forEach(b => b.addEventListener('click', saveConfig));
 $$('.revert-btn').forEach(b => b.addEventListener('click', revertConfig));
+$$('[data-key]').forEach(el => {
+  el.addEventListener('input', refreshLlmUi);
+  el.addEventListener('change', refreshLlmUi);
+});
 
 /* shortcut nav buttons */
 $('#btn-open-graph').addEventListener('click', () => { document.querySelector('[data-view="v-graph"]').click(); if (typeof loadGraph === 'function') loadGraph(); });

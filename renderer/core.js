@@ -6,7 +6,7 @@ const DEFAULTS = {
   prefetch_limit:8,max_topic_facts:5,topic_summary_chars:650,session_summary_chars:900,
   prune_after_days:90,episode_body_retention_hours:24,decay_half_life_days:90,decay_min_salience:0.15,
   reconsolidation_window_hours:6,review_intervals_days:'1,3,7,14,30',
-  builtin_snapshot_sync_enabled:true,builtin_memory_dir:'$HERMES_HOME/memories',
+  builtin_snapshot_sync_enabled:false,builtin_memory_dir:'$HERMES_HOME/memories',
   builtin_snapshot_user_chars:1375,builtin_snapshot_memory_chars:2200,
   wiki_export_enabled:false,wiki_export_dir:'$HERMES_HOME/consolidating_memory_wiki',
   wiki_export_on_consolidate:true,wiki_export_session_limit:50,wiki_export_topic_limit:100,

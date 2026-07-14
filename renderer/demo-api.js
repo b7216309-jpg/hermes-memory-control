@@ -1,0 +1,63 @@
+'use strict';
+
+const wait = (value) => new Promise((resolve) => setTimeout(() => resolve(structuredClone(value)), 80));
+const memorySources = { facts: 36, topics: 8, sessions: 14, preferences: 7, policies: 3, contradictions: 1, history: 112, links: 24, approvals: 0, pending: 0 };
+const facts = [
+  { id: 41, content: 'b7216309-jpg prefers concise answers with a warm, direct tone.', category: 'user_pref', importance: 9, confidence: .98, salience: .94, active: 1, sensitivity: 'normal', updated_at: '2026-07-14T18:21:10Z' },
+  { id: 39, content: 'Current project: Hermes Consolidating Local Memory.', category: 'project', importance: 10, confidence: .99, salience: .91, active: 1, sensitivity: 'normal', updated_at: '2026-07-14T18:11:04Z' },
+  { id: 35, content: 'Works with Windows, WSL2, GitHub, Hermes and local AI.', category: 'environment', importance: 8, confidence: .96, salience: .87, active: 1, sensitivity: 'normal', updated_at: '2026-07-14T17:55:42Z' },
+];
+const intentions = [
+  { id: 'e02318a4ecb44c56', title: 'Evaluate Conscious Agency in real Hermes conversations', priority: 90, status: 'active', autonomy: 'propose', source: 'operator', updated_at: '2026-07-14T17:47:45Z' },
+  { id: '5ce03f524da84f92', title: 'Ask b7216309-jpg for feedback after enough real usage', priority: 75, status: 'active', autonomy: 'message', source: 'operator', updated_at: '2026-07-14T17:47:46Z' },
+];
+const probe = {
+  home: '/home/demo/.hermes', hermes_version: 'Hermes Agent v0.18.2',
+  memory: { installed: true, version: '3.2.0', databases: [{ id: 'base', label: 'base', exists: true }, { id: '120f34821627991da12c3a69', label: 'scope 120f3482', exists: true, size: 684032 }], config: { database_encryption: true, memory_scope: 'user', retrieval_backend: 'hybrid' } },
+  agency: { installed: true, version: '0.1.0', config: { database_encryption: true, allow_proactive_messages: true }, runtime: { healthy: true, paused: false, gates: { eligible: false, reflection_eligible: true, blocked_by: ['no_user_interaction_recorded'], sent_today: 0, daily_limit: 2 }, contract: { intact: true, modified_install_detected: false, checks: { identity_disclaimer: true, context_disclaimer: true, context_claim_guard: true, cron_claim_guard: true } } } },
+  control: { protocol: 2, audit: { valid: true }, backups: 4 },
+};
+const schema = {
+  memory: [
+    { key: 'memory_scope', description: 'Isolation boundary for gateway users and agents', type: 'string', choices: ['user','agent','global'], value: 'user', default: 'user', lab: false },
+    { key: 'database_encryption', description: 'Require SQLCipher using CONSOLIDATING_MEMORY_DB_KEY', type: 'boolean', value: true, default: false, lab: true },
+    { key: 'sensitive_memory', description: 'Admission policy for sensitive memories', type: 'string', choices: ['deny','ask','allow'], value: 'ask', default: 'ask', lab: true },
+    { key: 'retrieval_backend', description: 'Recall backend', type: 'string', choices: ['fts','hybrid'], value: 'hybrid', default: 'fts', lab: false },
+    { key: 'llm_disable_thinking', description: 'Ask compatible extraction endpoints to disable reasoning', type: 'boolean', value: true, default: false, lab: false },
+    { key: 'embedding_model', description: 'Opt-in OpenAI-compatible embedding model', type: 'string', value: 'text-embedding-3-small', default: '', lab: false },
+  ],
+  agency: [
+    { key: 'allow_proactive_messages', description: 'Allow speech only after every hard gate passes', type: 'boolean', value: true, default: false, lab: false },
+    { key: 'require_prior_user_interaction', description: 'Block proactivity until a genuine user turn is recorded', type: 'boolean', value: true, default: true, lab: true },
+    { key: 'daily_message_limit', description: 'Maximum proactive messages per local day', type: 'integer', value: 2, default: 2, lab: false },
+    { key: 'cooldown_hours', description: 'Minimum interval between proactive messages', type: 'number', value: 6, default: 6, lab: false },
+    { key: 'cron_delivery', description: 'Hermes cron delivery target', type: 'string', value: 'origin', default: 'local', lab: false },
+  ],
+};
+
+export function createDemoApi() {
+  let plan;
+  return {
+    minimize() {}, maximize() {}, close() {},
+    profiles: () => wait([{ distro: 'Ubuntu', home: '/home/demo/.hermes' }]),
+    connect: () => wait(probe),
+    read(action, payload = {}) {
+      if (action === 'probe') return wait(probe);
+      if (action === 'memory_overview') return wait({ database: payload.database || 'base', doctor: { ok: true, integrity: ['ok'], database_size_bytes: 684032, pending_operations: 0, failed_operations: 0, source_counts: memorySources, dangling_references: { links: 0, associations: 0 } } });
+      if (action === 'memory_list') return wait({ table: payload.table, columns: Object.keys(facts[0]), rows: facts });
+      if (action === 'agency_snapshot') return wait({ snapshot: { workspace: { focus: 'Make Hermes more self-aware, useful, and safely proactive', questions: [] }, runtime: { paused: false, consecutive_silent_ticks: 5 }, control_signals: { curiosity: 0, completion: .4, coherence: .8, social_contact: 0, caution: .9 }, intentions, reflections: [], decisions: [] }, gates: probe.agency.runtime.gates, meaningful_events: [] });
+      if (action === 'agency_list') return wait({ table: payload.table, columns: Object.keys(intentions[0]), rows: intentions });
+      if (action === 'config_schema') return wait(schema);
+      if (action === 'backups_list') return wait([{ id: 'memory-20260714-184400-base.db', kind: 'memory', size: 684032, modified: '2026-07-14T18:44:00Z' }, { id: 'agency-20260714-184359.db', kind: 'agency', size: 81920, modified: '2026-07-14T18:43:59Z' }]);
+      if (action === 'audit_list') return wait({ valid: true, events: [{ id: 'a31f', at: '2026-07-14T18:44:00Z', operation: 'memory_backup', hash: '7af32b52183f', result: { kind: 'memory' } }, { id: '91de', at: '2026-07-14T18:43:59Z', operation: 'agency_backup', hash: '1842d20c77a1', result: { kind: 'agency' } }] });
+      if (action === 'wiki_list') return wait([{ id: 'index.md', title: 'Memory Index', size: 1400 }, { id: 'topics/hermes.md', title: 'Hermes', size: 920 }]);
+      if (action === 'wiki_read') return wait({ id: payload.id, markdown: '# Memory Index\n\nCompiled, local-only memory wiki.\n\n## Current projects\n\n- Hermes Consolidating Local Memory\n- Hermes Conscious Agency' });
+      if (action === 'memory_graph') return wait({ nodes: [{ id: 'topic:1', type: 'topic', label: 'Hermes', importance: 9, salience: .9 }, ...facts.map((item) => ({ id: `fact:${item.id}`, type: 'fact', label: item.content, ...item })), { id: 'preference:1', type: 'preference', label: 'Concise answers', importance: 8, salience: .8 }], edges: facts.map((item) => ({ source: 'topic:1', target: `fact:${item.id}`, type: 'contains' })) });
+      return wait({});
+    },
+    preview(action) { plan = { id: crypto.randomUUID(), title: action.replaceAll('_',' '), summary: 'Demo preview of the requested audited operation.', risk: 'high', phrase: 'CONFIRM DEMO', labRequired: action.startsWith('lab_') }; return wait(plan); },
+    commit: () => wait({ result: { success: true }, audit: { id: 'demo', hash: 'demo-hash' } }),
+    unlockLab: () => wait({ unlocked: true, expiresAt: new Date(Date.now() + 900000).toISOString() }),
+    labStatus: () => wait({ unlocked: false, expiresAt: null }),
+  };
+}

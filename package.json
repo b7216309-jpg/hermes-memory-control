@@ -1,16 +1,34 @@
 {
   "name": "hermes-memory-control",
-  "version": "1.0.0",
+  "version": "2.0.0",
+  "description": "Fail-safe desktop audit and control center for Hermes memory and conscious agency.",
   "main": "main.js",
-  "scripts": {
-    "start": "electron ."
+  "author": "b7216309-jpg",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/b7216309-jpg/hermes-memory-control.git"
   },
-  "devDependencies": {
-    "electron": "^35.0.0"
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "esbuild renderer/app.js --bundle --outfile=dist/renderer.js --format=iife --platform=browser --sourcemap",
+    "start": "npm run build && electron .",
+    "test": "npm run build && node --test tests/*.test.js",
+    "test:bridge": "python -m unittest discover -s tests -p test_*.py",
+    "test:wsl": "node scripts/wsl-smoke.js",
+    "test:electron": "npm run build && electron . --smoke-test",
+    "test:all": "npm test && npm run test:bridge && npm run test:wsl",
+    "ui:serve": "npm run build && node scripts/ui-server.js"
   },
   "dependencies": {
-    "js-yaml": "^4.1.0",
-    "marked": "^18.0.0",
-    "three": "^0.183.2"
+    "dompurify": "^3.4.12",
+    "marked": "^18.0.6",
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "electron": "^43.1.0",
+    "esbuild": "^0.28.1"
   }
 }

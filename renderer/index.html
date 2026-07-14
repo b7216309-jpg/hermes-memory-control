@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en" data-theme="gruvbox">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
+  <title>Hermes Control Center</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+    <header id="topbar">
+      <div class="brand"><span class="brand-mark">H:</span><strong>control.center</strong><span class="version" id="version-trigger">v2.0</span></div>
+      <div class="top-health"><span class="pulse" id="health-pulse"></span><span id="top-status">disconnected</span><select id="theme-select" aria-label="Theme"><option value="gruvbox">gruvbox</option><option value="nord">nord</option><option value="forest">forest</option></select></div>
+      <div class="window-controls">
+        <button id="win-min" aria-label="Minimize">_</button><button id="win-max" aria-label="Maximize">□</button><button id="win-close" aria-label="Close">×</button>
+      </div>
+    </header>
+
+    <div id="workspace">
+      <nav id="nav" aria-label="Primary navigation">
+        <button class="nav-item active" data-view="dashboard"><span>◈</span><em>Overview</em></button>
+        <button class="nav-item" data-view="memory"><span>M</span><em>Memory</em></button>
+        <button class="nav-item" data-view="agency"><span>A</span><em>Agency</em></button>
+        <button class="nav-item" data-view="graph"><span>3</span><em>Graph</em></button>
+        <div class="nav-rule"></div>
+        <button class="nav-item" data-view="config"><span>:</span><em>Config</em></button>
+        <button class="nav-item" data-view="backups"><span>B</span><em>Backups</em></button>
+        <button class="nav-item" data-view="audit"><span>✓</span><em>Audit</em></button>
+        <button class="nav-item" data-view="wiki"><span>W</span><em>Wiki</em></button>
+        <div class="nav-spacer"></div>
+        <button class="nav-item lab-nav hidden" data-view="lab"><span>!</span><em>Lab</em></button>
+      </nav>
+
+      <main id="views">
+        <section class="view active" id="view-dashboard">
+          <div class="connect-strip">
+            <label>WSL PROFILE</label><select id="profile-select"></select>
+            <label>MEMORY DB</label><select id="database-select" disabled></select>
+            <button class="button primary" id="connect-button">CONNECT</button>
+            <button class="button" id="refresh-button" disabled>REFRESH</button>
+          </div>
+          <div class="view-body dashboard-grid" id="dashboard-grid"></div>
+        </section>
+
+        <section class="view" id="view-memory">
+          <div class="toolbar">
+            <select id="memory-table"></select><input id="memory-query" placeholder="filter selected ledger…" maxlength="500">
+            <button class="button" id="memory-load">LOAD</button><button class="button primary" id="memory-backup">BACKUP</button><button class="button" id="memory-export">EXPORT</button><button class="button" id="memory-retry">RETRY FAILED</button><button class="button danger" id="memory-maintain">MAINTAIN</button>
+          </div>
+          <div class="split-view"><div class="table-wrap"><table id="memory-grid"></table></div><aside class="inspector" id="memory-inspector"></aside></div>
+        </section>
+
+        <section class="view" id="view-agency">
+          <div class="toolbar">
+            <select id="agency-table"></select><input id="agency-query" placeholder="filter agency ledger…" maxlength="500">
+            <button class="button" id="agency-load">LOAD</button><button class="button primary" id="agency-backup">BACKUP</button>
+            <button class="button" id="agency-focus">SET FOCUS</button><button class="button" id="agency-add">ADD INTENTION</button><button class="button" id="agency-question">ADD QUESTION</button><button class="button" id="agency-observation">ADD OBSERVATION</button><button class="button danger" id="agency-pause">PAUSE</button><button class="button" id="agency-resume">RESUME</button>
+          </div>
+          <div class="agency-layout"><div class="agency-state" id="agency-state"></div><div class="table-wrap"><table id="agency-grid"></table></div><aside class="inspector" id="agency-inspector"></aside></div>
+        </section>
+
+        <section class="view" id="view-graph">
+          <div class="toolbar"><span class="legend"><i class="topic"></i>topic <i class="fact"></i>fact <i class="preference"></i>preference <i class="edge"></i>link</span><button class="button" id="graph-load">REBUILD</button><button class="button" id="graph-reset">RESET CAMERA</button></div>
+          <div class="graph-stage"><canvas id="graph-canvas"></canvas><div id="graph-tooltip"></div><div class="graph-help">drag orbit · wheel zoom · click inspect</div></div>
+        </section>
+
+        <section class="view" id="view-config">
+          <div class="toolbar"><div class="segmented"><button class="active" data-config-plugin="memory">MEMORY</button><button data-config-plugin="agency">AGENCY</button></div><input id="config-filter" placeholder="filter settings…"><span id="staged-count">0 staged</span><button class="button primary" id="config-apply">PREVIEW CHANGES</button></div>
+          <div class="config-grid" id="config-grid"></div>
+        </section>
+
+        <section class="view" id="view-backups"><div class="toolbar"><button class="button primary" id="backup-memory">BACKUP MEMORY</button><button class="button primary" id="backup-agency">BACKUP AGENCY</button><button class="button" id="backups-load">REFRESH</button></div><div class="view-body" id="backups-list"></div></section>
+        <section class="view" id="view-audit"><div class="toolbar"><span id="audit-integrity">chain not checked</span><button class="button" id="audit-load">VERIFY CHAIN</button></div><div class="view-body audit-list" id="audit-list"></div></section>
+        <section class="view" id="view-wiki"><div class="wiki-layout"><aside id="wiki-list"></aside><article id="wiki-content"><div class="empty">Wiki export is not loaded.</div></article></div></section>
+
+        <section class="view lab-view" id="view-lab">
+          <div class="lab-warning"><strong>EDUCATIONAL LAB</strong><span>High-risk research settings. Every change still requires a backup, exact confirmation, and hash-chained audit.</span></div>
+          <div class="view-body lab-grid">
+            <div class="panel"><div class="panel-title red">operator unlock</div><p>Unlocks high-risk controls for 15 minutes. Obscurity is not the security boundary.</p><input id="lab-phrase" placeholder="type the educational lab phrase" autocomplete="off"><button class="button danger" id="lab-unlock">UNLOCK SESSION</button><div class="mono-note" id="lab-status">locked</div></div>
+            <div class="panel"><div class="panel-title red">research profiles</div><p><b>Unrestricted research</b> allows sensitive model processing, credential admission, unredacted exports, stored excerpts, and removes proactivity timing gates. Encryption stays on.</p><button class="button danger" id="lab-unrestricted">APPLY UNRESTRICTED RESEARCH</button><button class="button danger" id="lab-export-sensitive">EXPORT INCLUDING SENSITIVE</button><button class="button safe" id="lab-recommended">RESTORE RECOMMENDED POLICY</button></div>
+            <div class="panel"><div class="panel-title amber">prompt contract audit</div><div id="contract-audit"></div><p>This controller detects installed-code modifications. Source-patching is intentionally not automated; policy experiments should be implemented as explicit plugin configuration, not brittle text replacement.</p></div>
+            <div class="panel"><div class="panel-title amber">dangerous settings</div><p>Lab-marked fields are edited below and remain subject to plugin validation.</p><div id="lab-config"></div></div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <footer id="statusbar"><span id="status-message">ready</span><span id="status-path">no Hermes profile</span></footer>
+  </div>
+
+  <dialog id="confirm-dialog">
+    <form method="dialog"><div class="dialog-head"><span id="confirm-risk">RISK</span><button value="cancel">×</button></div><h2 id="confirm-title"></h2><p id="confirm-summary"></p><label>Type exactly: <code id="confirm-required"></code></label><input id="confirm-input" autocomplete="off"><div class="dialog-actions"><button class="button" value="cancel">CANCEL</button><button class="button danger" id="confirm-commit" value="default">COMMIT</button></div></form>
+  </dialog>
+  <div id="toast-stack" aria-live="polite"></div>
+  <script src="../dist/renderer.js"></script>
+</body>
+</html>

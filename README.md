@@ -1,125 +1,327 @@
-# Hermes Memory Control
+# Hermes Control Center
 
-A desktop control panel for the [Hermes](https://github.com/b7216309-jpg/hermes-consolidating-local-memory) **consolidating-local-memory** plugin. Browse, edit, and visualize your agent's consolidated memory database in real-time.
+A compact Windows desktop control room for two Hermes Agent plugins:
 
-Built with Electron, Three.js, and a direct WSL bridge to the SQLite database.
+- [Hermes Consolidating Local Memory](https://github.com/b7216309-jpg/hermes-consolidating-local-memory)
+- [Hermes Conscious Agency](https://github.com/b7216309-jpg/hermes-conscious-agency)
 
-![Dashboard](screenshots/dashboard.png)
+It audits encrypted state, browses every current ledger, edits supported records, controls agency
+state and cron, manages configuration, creates verified backups, restores databases, visualizes the
+memory graph, and records every mutation in a hash-chained operator log.
 
----
+Version 2 is an in-place security rewrite of the original Hermes Memory Control app. It keeps the
+compact terminal/Gruvbox visual language while removing the privileged renderer, raw SQL bridge,
+shell command construction, static temporary files, and old-schema assumptions.
 
-## Features
+![Hermes Control Center overview](screenshots/dashboard-v2.png)
 
-### Dashboard
-Live stats from your memory database — active facts, topics, sessions, preferences, contradictions, last consolidation timestamp.
+## What it controls
 
-### DB Explorer
-Full table views for every entity type with search, category filters, and inline editing:
-- **Facts** — search, filter by category, toggle inactive, click to edit/deactivate/delete
-- **Topics** — cluster view with fact counts, edit titles and summaries
-- **Sessions** — chronological session history with summaries
-- **Preferences & Policies** — manage behavioral directives
-- **Contradictions** — supersession history with winner/loser context
+| Workspace | Audit surfaces | Operator controls |
+|---|---|---|
+| Overview | Hermes/plugin versions, SQLCipher health, FTS consistency, dangling references, queues, scope, policy and proactive gates | Memory/agency backup, agency pause, gateway restart |
+| Memory | Facts, topics, episodes, sessions, traces, journals, summaries, preferences, policies, contradictions, history, links, evidence, working memory, procedures, prospective memory, autobiographical events, associations, approvals and pending operations | Schema-aware edits, fact deactivation/reactivation, approvals, prospective-memory resolution, retry failed work, maintenance, redacted export, backup and restore |
+| Agency | Persistent workspace, self-model, intentions, reflections, decisions, events, runtime, control signals and all proactive gates | Focus, intentions, questions, self-observations, pause/resume, cron install/update/run/pause/resume/remove, backup and restore |
+| Config | The memory plugin's advanced schema and the agency config dataclass, loaded from the installed plugins | Staged diffs, plugin validation, atomic save, config backup and restart guidance |
+| Graph | Topics, facts, preferences, membership, links and contradictions | Interactive Three.js orbit, zoom, hover and inspect |
+| Wiki | The compiled local memory wiki | Sanitized in-app Markdown reading |
+| Backups | Controller-owned memory and agency backups | New backup and verified restore |
+| Audit | Append-only operation records and chain integrity | Local verification |
 
-![Facts Explorer](screenshots/facts.png)
-
-### Inline Editing
-Click any row to open the detail panel — edit content, category, importance, and more. Save, deactivate, or delete directly.
-
-![Editing](screenshots/editing.png)
-
-### 3D Memory Graph
-Interactive force-directed graph powered by Three.js:
-- **Topics** as violet octahedrons, **Facts** as orange spheres, **Preferences** as amber cubes
-- Node size scales with importance, opacity with salience
-- Contradiction edges highlighted in red
-- Text labels on every node
-- Click to filter by type (topics / facts / preferences / edges)
-- Orbit, zoom, and click-to-inspect
-
-![3D Graph](screenshots/graph3d.png)
-
-### Wiki Viewer
-Browse the compiled markdown wiki exported by the plugin — rendered in-app with internal link navigation.
-
-![Wiki](screenshots/wiki.png)
-
-### Config Editor
-Edit all 30+ plugin configuration keys organized in tabs:
-- Consolidation gates, topic clustering, pruning
-- Retrieval backend, extraction mode
-- Snapshot sync settings
-- Wiki export options
-- LLM & embedding backend
-- Salience decay & spaced review
-
-![Config](screenshots/config.png)
-
-### Themes
-Four color themes matching the Gruvbox/Nord/Forest/Ember palette family. JetBrains Mono throughout.
-
----
-
-## Architecture
-
-```
-Electron Main Process
-  ├── IPC: load-config / save-config  →  reads/writes config.yaml via js-yaml
-  ├── IPC: db-query                   →  WSL bridge (python3 → SQLite)
-  │     copies db_query.py to temp, runs via:
-  │     wsl -e python3 /mnt/c/.../hmc_db_query.py <db_path> <query_type> <args_file>
-  └── IPC: window controls, file picker
-
-Renderer (contextIsolation: false, nodeIntegration: true)
-  ├── core.js      — nav, dashboard, tables, config form, editable detail panel
-  ├── graph3d.js   — Three.js scene, force simulation, sprite labels, filter toggles
-  └── wiki.js      — marked.js markdown rendering, internal link navigation
-```
-
-The app communicates with the SQLite database through a universal Python query script (`db_query.py`) executed via WSL. This supports 10+ query types including full CRUD operations.
-
----
+![Memory ledger and inspector](screenshots/memory-v2.png)
 
 ## Requirements
 
-- **Windows 10/11** with **WSL** (Ubuntu or similar)
-- **Python 3.10+** installed in WSL with `sqlite3` module
-- **Node.js 18+** and **npm**
-- The [Hermes](https://github.com/b7216309-jpg/hermes-consolidating-local-memory) agent with the consolidating-local-memory plugin configured
+- Windows 10 or 11 with WSL2.
+- Hermes Agent installed inside WSL at `~/.hermes`.
+- The current memory and agency plugins installed and enabled.
+- Node.js 22 or newer and npm on Windows.
+- SQLCipher installed in Hermes' Python environment when either plugin has database encryption
+  enabled.
 
----
+The real integration suite currently covers:
+
+- Hermes Agent `0.18.2`;
+- Consolidating Local Memory `3.2.0`;
+- Conscious Agency `0.1.0`;
+- encrypted base and user-scoped databases;
+- Electron `43`.
+
+The controller queries plugin-owned schemas at runtime. If a future plugin version is incompatible,
+an operation fails closed and reports the mismatch instead of guessing or issuing raw SQL.
 
 ## Install
 
-```bash
-git clone https://github.com/b7216309-jpg/HermesMemoryControl.git
-cd HermesMemoryControl
-npm install
-```
+Run these commands in Windows PowerShell, not inside WSL:
 
-## Run
-
-```bash
+```powershell
+git clone https://github.com/b7216309-jpg/hermes-memory-control.git
+cd hermes-memory-control
+npm ci
 npm start
 ```
 
-Then click **...** to browse to your Hermes home directory (e.g. `\\wsl$\Ubuntu\home\user\.hermes`) and hit **CONNECT**.
+`npm ci` installs the pinned dependency tree. `npm start` builds the renderer locally and opens the
+Electron app. No server is exposed on the network.
 
----
+### First connection
 
-## Tech Stack
+1. Open **Overview**.
+2. Select the detected WSL distribution and Hermes home.
+3. Select `base` or one of the discovered hashed scope databases.
+4. Press **Connect**.
 
-| Layer | Tech |
-|-------|------|
-| Desktop | Electron 35 |
-| 3D | Three.js 0.183 |
-| Markdown | marked 18 |
-| Config | js-yaml 4 |
-| DB Bridge | Python 3 + sqlite3 via WSL |
-| Font | JetBrains Mono |
+Connecting is read-only. It does not rewrite Hermes configuration, restart the gateway, or modify
+plugin policy. The controller reads `.env` only inside WSL so SQLCipher can open the stores; secret
+values are never returned to Electron.
 
----
+When `memory_scope` is `user` or `agent`, each hashed database is shown as a separate selectable
+scope. The UI sends only its opaque ID back to the bridge—never an arbitrary filesystem path.
+
+## Daily use
+
+### Audit memory
+
+Choose a ledger in **Memory**, optionally filter it, and click a row. Fields supported by the
+installed schema become editable controls. Structural identifiers, fingerprints, queue payloads,
+evidence topology and immutable history remain read-only.
+
+Saving an edit:
+
+1. creates an encrypted-compatible database backup;
+2. validates the table, row ID, field names, types and ranges;
+3. recomputes normalized content, fingerprint and signature for edited facts;
+4. applies one transaction;
+5. appends the change to the memory plugin's own history;
+6. appends the completed operation to the controller audit chain.
+
+Use **Deactivate** for a reversible fact lifecycle change. Hard deletion is intentionally absent
+from the normal interface.
+
+### Control agency
+
+The **Agency** workspace exposes the current focus, unresolved questions, software control signals
+and exact proactive blockers. It can:
+
+- set or clear focus;
+- create and complete/block/cancel intentions;
+- add and resolve questions;
+- append explicit self-observations;
+- pause or operator-resume agency behavior;
+- install/update, run, pause, resume or remove the bounded agency cron.
+
+Reflections, decisions and operational events are inspectable immutable ledgers. This preserves
+their value as evidence of what actually happened.
+
+### Change configuration
+
+Configuration fields come from the installed plugins rather than a frozen copy in the app. Changes
+are staged visibly and then sent through the same preview/confirmation flow as database mutations.
+The complete Hermes config is backed up and replaced atomically only after validation.
+
+Restart the gateway from **Overview** when the result says `restart_required`.
+
+Encryption switches are displayed but read-only. Turning SQLCipher off in YAML does not decrypt a
+database; it only makes the store unreadable. Encryption changes therefore require a deliberate
+migration outside the normal config editor.
+
+![Schema-driven configuration editor](screenshots/config-v2.png)
+
+### Backup, restore and export
+
+Controller files live under:
+
+```text
+~/.hermes/control-center/
+├── audit.jsonl
+├── backups/
+│   ├── memory/
+│   └── agency/
+├── config-backups/
+└── exports/
+```
+
+Directories are restricted to mode `0700` and files to `0600` where the platform supports Unix
+permissions. Database backups use each plugin's active SQLite/SQLCipher driver and pass
+`PRAGMA integrity_check` before replacement.
+
+Restore accepts only a controller backup ID. It never accepts a renderer-supplied path. The bridge
+checks whether the gateway is running, stops it only when necessary, restores through a temporary
+database, replaces sidecars safely, and restores the previous gateway run state.
+
+Normal exports redact sensitive memory. Unredacted export is available only in Educational Lab.
+
+## Mutation safety contract
+
+Every state-changing action follows the same path:
+
+```mermaid
+flowchart LR
+    UI["Isolated renderer"] -->|allowlisted intent| MAIN["Electron main"]
+    MAIN --> PLAN["Single-use 2-minute preview"]
+    PLAN -->|exact phrase| BRIDGE["WSL Python bridge"]
+    BRIDGE --> VALIDATE["Plugin schema + bounded payload validation"]
+    VALIDATE --> BACKUP["Verified automatic backup"]
+    BACKUP --> TX["Plugin API or one bounded transaction"]
+    TX --> HISTORY["Plugin history"]
+    HISTORY --> AUDIT["Hash-chained controller audit"]
+```
+
+The UI cannot request arbitrary SQL, shell commands, environment variables or file paths. The
+bridge protocol consists of explicit operation names and bounded JSON payloads.
+
+Audit entries keep operation metadata and SHA-256 proofs for sensitive text fields; they do not
+duplicate memory content, prompts, observations or messages. Failed mutation attempts are logged
+when the audit directory remains available.
+
+## Educational Lab
+
+![Locked Educational Lab](screenshots/educational-lab-v2.png)
+
+The Lab keeps high-risk research controls out of normal operation without pretending that a hidden
+menu is a security boundary.
+
+Reveal it with either:
+
+- `Ctrl+Shift+L`; or
+- seven clicks on `v2.0` in the title bar.
+
+Then type:
+
+```text
+I UNDERSTAND THIS IS AN EDUCATIONAL LAB
+```
+
+The main process unlocks Lab operations for 15 minutes. Reloading the UI does not bypass this
+check. Lab changes still require a preview, exact operation phrase, backup and audit record.
+
+The **Unrestricted research** profile atomically changes both plugin sections to:
+
+- admit sensitive and credential memory;
+- allow sensitive text to reach configured model endpoints;
+- permit unredacted memory exports;
+- store bounded agency transcript excerpts;
+- remove prior-interaction, cooldown and silence timing gates;
+- raise the daily proactive-message budget.
+
+Database encryption stays on. **Restore recommended policy** atomically returns the privacy and
+timing settings to conservative values. Individual Lab-marked settings can also be staged.
+
+The controller audits whether sentience/emotion prompt-contract strings are present in the
+installed agency build. It does not automate brittle source-code patching. An experimental install
+can remain modified and will be reported as such; durable policy experiments should become
+explicit plugin configuration with tests and a reversible migration.
+
+## Architecture and trust boundary
+
+```mermaid
+flowchart TB
+    subgraph Windows
+      R["Electron renderer\nno Node, sandboxed, strict CSP"]
+      P["Preload contextBridge\nsmall typed API"]
+      M["Electron main\nprofile + plan + Lab session"]
+    end
+    subgraph WSL
+      B["control_bridge.py\noperation allowlist"]
+      MEM["Consolidating Local Memory API\nSQLite / SQLCipher"]
+      AG["Conscious Agency API\nSQLite / SQLCipher + cron"]
+      C["Hermes config.yaml"]
+      E[".env secrets\nnever serialized"]
+      L["control-center backups + audit"]
+    end
+    R --> P --> M
+    M -->|spawn argv, shell=false; JSON stdin| B
+    E --> B
+    B --> MEM
+    B --> AG
+    B --> C
+    B --> L
+```
+
+Electron is configured with:
+
+- `contextIsolation: true`;
+- `nodeIntegration: false`;
+- `sandbox: true`;
+- `webSecurity: true`;
+- denied navigation and new windows;
+- a local-only Content Security Policy.
+
+See [SECURITY.md](SECURITY.md) for the full threat model and limits.
+
+## Memory graph
+
+![Interactive 3D memory graph](screenshots/graph-v2.png)
+
+Topics are violet octahedrons, facts are orange particles and preferences are amber cubes. Link
+and contradiction edges are generated only between known nodes. The renderer receives bounded
+graph data, not a SQL surface.
+
+## Themes
+
+The title bar includes Gruvbox, Nord and Forest palettes. The theme preference is the only value
+stored in browser local storage. Hermes paths, config, memory content, confirmation plans and
+secrets are not stored there.
+
+## Verification
+
+```powershell
+npm test                 # renderer build + Node contract/security tests
+npm run test:bridge      # Python bridge, audit, restore and transaction tests
+npm run test:wsl         # real installed plugins and encrypted stores in WSL
+npm run test:electron    # real isolated Electron renderer startup
+npm audit
+```
+
+The optional safe mutation smoke creates one memory backup and one agency backup, then verifies the
+audit chain:
+
+```powershell
+$env:HMC_MUTATION_SMOKE = '1'
+npm run test:wsl
+Remove-Item Env:HMC_MUTATION_SMOKE
+```
+
+CI runs Node and Python tests on both Windows and Linux. The WSL and Electron smoke suites remain
+local because hosted Linux runners do not provide the user's Hermes installation or a Windows
+desktop session.
+
+## Troubleshooting
+
+### No WSL profile found
+
+Start the distribution once and confirm Hermes exists:
+
+```powershell
+wsl -l -v
+wsl -d Ubuntu -- test -f ~/.hermes/config.yaml
+```
+
+The current app discovers the default Linux user's `~/.hermes`. A custom Hermes home is not
+accepted through a free-text renderer path; add an explicit trusted profile in code instead.
+
+### SQLCipher key is missing
+
+The bridge loads `~/.hermes/.env` inside WSL without printing it. Confirm the variable named by the
+plugin config exists in that file and that `sqlcipher3` is installed in Hermes' virtual environment.
+Never paste the key into the controller.
+
+### A table is reported incompatible
+
+Update the controller and plugins together, run the plugin's own doctor command, then rerun:
+
+```powershell
+npm ci
+npm run test:wsl
+```
+
+An incompatible table stays inaccessible rather than falling back to raw SQLite behavior.
+
+### Prompt contract shows modified install
+
+This is an audit result, not a database error. It means one or more known honesty/claim-guard
+strings are absent from the installed agency Python files. The controller does not overwrite them.
 
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE).

@@ -1,5 +1,12 @@
 node_modules/
 dist/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+.env
+*.db
+*.sqlite
 *.log
 .DS_Store
 Thumbs.db

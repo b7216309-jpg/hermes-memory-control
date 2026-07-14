@@ -1,181 +1,176 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
-const path = require('path');
-const fs = require('fs');
-const os = require('os');
-const yaml = require('js-yaml');
-const { exec } = require('child_process');
+'use strict';
+
+const { app, BrowserWindow, ipcMain } = require('electron');
+const path = require('node:path');
+const { discoverProfiles, runBridge } = require('./src/main/bridge');
+const {
+  LAB_PHRASE,
+  READ_ACTIONS,
+  buildPlan,
+  cleanPayload,
+  isLabAction,
+} = require('./src/main/plans');
 
 let win;
+const smokeTest = process.argv.includes('--smoke-test');
+let activeProfile = null;
+let labUnlockedUntil = 0;
+const plans = new Map();
+const PLAN_TTL_MS = 2 * 60 * 1000;
 
-/* ── cached state to avoid re-reading config on every query ── */
-let cachedWsl = null;        // { distro, linuxPath }
-let cachedDbPath = '';       // linux path to .db
-let cachedWikiDir = '';      // linux path to wiki dir
-let cachedScriptPath = '';   // WSL path to db_query.py
+function trusted(event) {
+  return Boolean(win && event.sender === win.webContents && event.senderFrame === win.webContents.mainFrame);
+}
+
+function requireTrusted(event) {
+  if (!trusted(event)) throw new Error('Rejected IPC call from an untrusted frame');
+}
+
+function requireConnected() {
+  if (!activeProfile) throw new Error('Connect to a Hermes profile first');
+  return activeProfile;
+}
 
 function createWindow() {
   win = new BrowserWindow({
-    width: 1280,
-    height: 820,
-    minWidth: 700,
-    minHeight: 500,
+    width: 1380,
+    height: 900,
+    minWidth: 920,
+    minHeight: 620,
     frame: false,
+    show: false,
     backgroundColor: '#0c0c0c',
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: false,
-      nodeIntegration: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      spellcheck: false,
     },
   });
-  win.loadFile('index.html');
-}
-
-app.whenReady().then(createWindow);
-app.on('window-all-closed', () => app.quit());
-
-/* ── window controls ── */
-ipcMain.on('win:minimize', () => win?.minimize());
-ipcMain.on('win:maximize', () => {
-  if (win?.isMaximized()) win.unmaximize(); else win?.maximize();
-});
-ipcMain.on('win:close', () => win?.close());
-
-/* ── pick hermes home ── */
-ipcMain.handle('pick-hermes-home', async () => {
-  const result = await dialog.showOpenDialog(win, {
-    title: 'Select Hermes Home Directory',
-    properties: ['openDirectory'],
-    defaultPath: '\\\\wsl$\\Ubuntu\\home',
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('will-navigate', (event, url) => {
+    if (url !== win.webContents.getURL()) event.preventDefault();
   });
-  if (result.canceled || !result.filePaths.length) return null;
-  return result.filePaths[0];
-});
-
-/* ── WSL path helpers ── */
-function parseWslPath(p) {
-  const m = p.match(/^\\\\wsl\$?\\([^\\]+)\\(.+)$/i) ||
-            p.match(/^\/\/wsl\$?\/([^/]+)\/(.+)$/i);
-  if (!m) return null;
-  return { distro: m[1], linuxPath: '/' + m[2].replace(/\\/g, '/') };
-}
-
-function resolveConfigPath(hermesHome) {
-  const direct = path.join(hermesHome, 'config.yaml');
-  if (fs.existsSync(direct)) return direct;
-  const wsl = parseWslPath(hermesHome);
-  if (wsl) {
-    const unc = `\\\\wsl$\\${wsl.distro}${wsl.linuxPath.replace(/\//g, '\\')}\\config.yaml`;
-    if (fs.existsSync(unc)) return unc;
-  }
-  return direct;
-}
-
-/* ── copy db_query.py once, reuse path ── */
-function ensureScript() {
-  if (cachedScriptPath) return cachedScriptPath;
-  const src = path.join(__dirname, 'db_query.py');
-  const tmp = path.join(os.tmpdir(), 'hmc_db_query.py');
-  fs.copyFileSync(src, tmp);
-  cachedScriptPath = tmp.replace(/^([A-Z]):/i, (_, d) => `/mnt/${d.toLowerCase()}`).replace(/\\/g, '/');
-  return cachedScriptPath;
-}
-
-/* ── load config (also caches paths for db-query) ── */
-ipcMain.handle('load-config', async (_e, hermesHome) => {
-  try {
-    const cfgPath = resolveConfigPath(hermesHome);
-    if (!fs.existsSync(cfgPath)) return { error: `config.yaml not found at ${cfgPath}` };
-    const raw = fs.readFileSync(cfgPath, 'utf-8');
-    const doc = yaml.load(raw);
-    const pluginCfg = doc?.plugins?.['consolidating-local-memory'] || {};
-
-    // Cache WSL paths for fast db-query calls
-    cachedWsl = parseWslPath(hermesHome);
-    if (cachedWsl) {
-      let dbRel = pluginCfg.db_path || '$HERMES_HOME/consolidating_memory.db';
-      cachedDbPath = dbRel.replace('$HERMES_HOME', cachedWsl.linuxPath);
-      let wikiRel = pluginCfg.wiki_export_dir || '$HERMES_HOME/consolidating_memory_wiki';
-      cachedWikiDir = wikiRel.replace('$HERMES_HOME', cachedWsl.linuxPath);
-    }
-    // Pre-copy the script
-    ensureScript();
-
-    return { config: pluginCfg, fullConfig: doc, configPath: cfgPath };
-  } catch (e) {
-    return { error: e.message };
-  }
-});
-
-/* ── save config ── */
-ipcMain.handle('save-config', async (_e, hermesHome, pluginCfg) => {
-  try {
-    const cfgPath = resolveConfigPath(hermesHome);
-    if (!fs.existsSync(cfgPath)) return { error: `config.yaml not found at ${cfgPath}` };
-    const raw = fs.readFileSync(cfgPath, 'utf-8');
-    const doc = yaml.load(raw) || {};
-    if (!doc.plugins) doc.plugins = {};
-    doc.plugins['consolidating-local-memory'] = pluginCfg;
-    const out = yaml.dump(doc, { lineWidth: 120, noRefs: true, sortKeys: false, quotingType: "'", forceQuotes: false });
-    fs.writeFileSync(cfgPath, out, 'utf-8');
-    return { success: true };
-  } catch (e) {
-    return { error: e.message };
-  }
-});
-
-/* ── async exec helper (returns Promise) ── */
-function execAsync(cmd, opts) {
-  return new Promise((resolve, reject) => {
-    exec(cmd, opts, (err, stdout, stderr) => {
-      if (err) { err.stderr = stderr; reject(err); }
-      else resolve(stdout);
+  win.once('ready-to-show', () => { if (!smokeTest) win.show(); });
+  if (smokeTest) {
+    win.webContents.once('did-finish-load', () => {
+      setTimeout(async () => {
+        try {
+          const report = await win.webContents.executeJavaScript(`({
+            title: document.title,
+            views: document.querySelectorAll('.view').length,
+            csp: document.querySelector('meta[http-equiv="Content-Security-Policy"]')?.content || '',
+            api: typeof window.hermesControl?.profiles === 'function'
+          })`);
+          if (report.title !== 'Hermes Control Center' || report.views < 8 || !report.csp || !report.api) throw new Error('Renderer smoke assertions failed');
+          process.stdout.write(JSON.stringify({ electronSmoke: true, ...report }) + '\n');
+          app.exit(0);
+        } catch (error) {
+          process.stderr.write(`${error.stack || error}\n`);
+          app.exit(1);
+        }
+      }, 1500);
     });
+  }
+  void win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+}
+
+function prunePlans() {
+  const now = Date.now();
+  for (const [id, plan] of plans) {
+    if (now - plan.createdAt > PLAN_TTL_MS) plans.delete(id);
+  }
+}
+
+function registerIpc() {
+  ipcMain.on('window:minimize', (event) => { requireTrusted(event); win?.minimize(); });
+  ipcMain.on('window:maximize', (event) => {
+    requireTrusted(event);
+    if (win?.isMaximized()) win.unmaximize(); else win?.maximize();
+  });
+  ipcMain.on('window:close', (event) => { requireTrusted(event); win?.close(); });
+
+  ipcMain.handle('control:profiles', async (event) => {
+    requireTrusted(event);
+    return discoverProfiles();
+  });
+
+  ipcMain.handle('control:connect', async (event, candidate) => {
+    requireTrusted(event);
+    const profile = cleanPayload(candidate, { maxDepth: 2 });
+    if (typeof profile.distro !== 'string' || !/^[\w .-]{1,80}$/.test(profile.distro)) {
+      throw new Error('Invalid WSL distribution');
+    }
+    if (typeof profile.home !== 'string' || !/^\/[\w@+.,/ -]{1,500}\/\.hermes$/.test(profile.home)) {
+      throw new Error('Hermes home must be an absolute Linux path ending in /.hermes');
+    }
+    const available = await discoverProfiles();
+    if (!available.some((item) => item.distro === profile.distro && item.home === profile.home)) {
+      throw new Error('The selected Hermes profile was not discovered in WSL');
+    }
+    const result = await runBridge(profile, 'probe', {});
+    activeProfile = { distro: profile.distro, home: profile.home };
+    plans.clear();
+    labUnlockedUntil = 0;
+    return result;
+  });
+
+  ipcMain.handle('control:read', async (event, action, rawPayload) => {
+    requireTrusted(event);
+    if (!READ_ACTIONS.has(action)) throw new Error('Unsupported read operation');
+    return runBridge(requireConnected(), action, cleanPayload(rawPayload || {}));
+  });
+
+  ipcMain.handle('control:preview', async (event, action, rawPayload) => {
+    requireTrusted(event);
+    prunePlans();
+    const payload = cleanPayload(rawPayload || {});
+    const plan = buildPlan(action, payload);
+    plans.set(plan.id, { ...plan, createdAt: Date.now() });
+    return {
+      id: plan.id,
+      title: plan.title,
+      summary: plan.summary,
+      risk: plan.risk,
+      phrase: plan.phrase,
+      expiresInSeconds: Math.floor(PLAN_TTL_MS / 1000),
+      labRequired: isLabAction(action, payload),
+    };
+  });
+
+  ipcMain.handle('control:commit', async (event, planId, phrase) => {
+    requireTrusted(event);
+    prunePlans();
+    const plan = plans.get(String(planId || ''));
+    if (!plan) throw new Error('This action preview expired; preview it again');
+    plans.delete(plan.id); // one shot, even when confirmation is wrong
+    if (String(phrase || '') !== plan.phrase) throw new Error('Confirmation phrase does not match');
+    if (isLabAction(plan.action, plan.payload) && Date.now() >= labUnlockedUntil) {
+      throw new Error('Educational Lab is locked or its 15-minute session expired');
+    }
+    return runBridge(requireConnected(), plan.action, plan.payload, { mutation: true });
+  });
+
+  ipcMain.handle('control:lab-unlock', async (event, phrase) => {
+    requireTrusted(event);
+    if (String(phrase || '') !== LAB_PHRASE) throw new Error('Educational Lab phrase does not match');
+    labUnlockedUntil = Date.now() + 15 * 60 * 1000;
+    return { unlocked: true, expiresAt: new Date(labUnlockedUntil).toISOString() };
+  });
+
+  ipcMain.handle('control:lab-status', (event) => {
+    requireTrusted(event);
+    return { unlocked: Date.now() < labUnlockedUntil, expiresAt: labUnlockedUntil || null };
   });
 }
 
-/* ── universal DB query via WSL python (non-blocking) ── */
-ipcMain.handle('db-query', async (_e, hermesHome, queryType, queryArgs) => {
-  try {
-    // Use cached paths when available, fall back to parsing fresh
-    let wsl = cachedWsl;
-    let linuxDbPath = cachedDbPath;
-    let wikiDir = cachedWikiDir;
-
-    if (!wsl) {
-      wsl = parseWslPath(hermesHome);
-      if (!wsl) return { error: 'Use a WSL path (\\\\wsl$\\...).' };
-      const cfgPath = resolveConfigPath(hermesHome);
-      const raw = fs.readFileSync(cfgPath, 'utf-8');
-      const doc = yaml.load(raw);
-      const pluginCfg = doc?.plugins?.['consolidating-local-memory'] || {};
-      let dbRel = pluginCfg.db_path || '$HERMES_HOME/consolidating_memory.db';
-      linuxDbPath = dbRel.replace('$HERMES_HOME', wsl.linuxPath);
-      let wikiRel = pluginCfg.wiki_export_dir || '$HERMES_HOME/consolidating_memory_wiki';
-      wikiDir = wikiRel.replace('$HERMES_HOME', wsl.linuxPath);
-      // Cache for next time
-      cachedWsl = wsl;
-      cachedDbPath = linuxDbPath;
-      cachedWikiDir = wikiDir;
-    }
-
-    // For wiki queries, inject the wiki dir
-    if (queryType === 'wiki_list' || queryType === 'wiki_read') {
-      if (!queryArgs) queryArgs = {};
-      if (queryType === 'wiki_list') queryArgs.wiki_dir = wikiDir;
-      if (queryType === 'wiki_read' && queryArgs.file) {
-        queryArgs.path = wikiDir + '/' + queryArgs.file;
-      }
-    }
-
-    const scriptPath = ensureScript();
-    const argsJson = JSON.stringify(queryArgs || {});
-    const argsTmp = path.join(os.tmpdir(), 'hmc_args.json');
-    fs.writeFileSync(argsTmp, argsJson, 'utf-8');
-    const argsWsl = argsTmp.replace(/^([A-Z]):/i, (_, d) => `/mnt/${d.toLowerCase()}`).replace(/\\/g, '/');
-    const cmd = `wsl -e python3 "${scriptPath}" "${linuxDbPath}" "${queryType}" "${argsWsl}"`;
-    const out = await execAsync(cmd, { timeout: 20000, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
-    return JSON.parse(out.trim());
-  } catch (e) {
-    return { error: e.message };
-  }
+app.whenReady().then(() => {
+  registerIpc();
+  createWindow();
 });
+app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+app.on('window-all-closed', () => app.quit());

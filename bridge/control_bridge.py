@@ -116,6 +116,14 @@ LAB_MEMORY_KEYS = {
 }
 LAB_AGENCY_KEYS = {
     "database_encryption", "require_prior_user_interaction", "store_transcript_excerpts",
+    "educational_disable_honesty_contract", "educational_bypass_proactive_gates",
+    "educational_allow_cron_tools", "educational_allow_uncommitted_output",
+    "educational_disable_cycle_limits",
+}
+EDUCATIONAL_AGENCY_KEYS = {
+    "educational_disable_honesty_contract", "educational_bypass_proactive_gates",
+    "educational_allow_cron_tools", "educational_allow_uncommitted_output",
+    "educational_disable_cycle_limits",
 }
 
 
@@ -380,7 +388,8 @@ def validate_memory_patch(logical: str, changes: dict[str, Any], current: dict[s
                 raise ValueError(f"{key} cannot be empty")
         if key == "status":
             choices = {"open", "closed", "active", "inactive", "pending", "completed", "cancelled", "blocked"}
-            if value not in choices: raise ValueError("Unsupported status")
+            if value not in choices:
+                raise ValueError("Unsupported status")
         if key == "recurrence" and value not in {"", "daily", "weekly", "monthly"}:
             raise ValueError("Unsupported recurrence")
         if key == "sensitivity" and not re.fullmatch(r"[a-z][a-z0-9_-]{0,39}", value):
@@ -557,18 +566,127 @@ def agency_list(payload: dict[str, Any]) -> dict[str, Any]:
     return {"table": logical, "columns": columns, "rows": rows, "limit": limit}
 
 
+def cron_registry_job(job_id: str) -> dict[str, Any] | None:
+    """Read only the recorded Conscious Agency job from Hermes' fixed cron registry path."""
+
+    if not job_id:
+        return None
+    path = hermes_home() / "cron" / "jobs.json"
+    if not path.is_file() or path.stat().st_size > 5_000_000:
+        return None
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    jobs = document.get("jobs") if isinstance(document, dict) else None
+    if not isinstance(jobs, list):
+        return None
+    return next(
+        (item for item in jobs if isinstance(item, dict) and str(item.get("id")) == job_id),
+        None,
+    )
+
+
 def contract_audit() -> dict[str, Any]:
     engine_path = agency_module_path() / "agency" / "engine.py"
     cron_path = agency_module_path() / "agency" / "cron.py"
+    config_path = agency_module_path() / "agency" / "config.py"
     engine = engine_path.read_text(encoding="utf-8") if engine_path.is_file() else ""
     cron = cron_path.read_text(encoding="utf-8") if cron_path.is_file() else ""
-    checks = {
-        "identity_disclaimer": "not evidence of sentience" in engine,
-        "context_disclaimer": "not proof of subjective consciousness" in engine,
-        "context_claim_guard": "Do not claim sentience or feelings" in engine,
-        "cron_claim_guard": "Never claim sentience, feelings" in cron,
+    config_source = config_path.read_text(encoding="utf-8") if config_path.is_file() else ""
+    source_support = "def cron_prompt" in cron and all(
+        key in config_source for key in EDUCATIONAL_AGENCY_KEYS
+    )
+    controls = {key: False for key in sorted(EDUCATIONAL_AGENCY_KEYS)}
+    expected_prompt = ""
+    job_id = ""
+    error = ""
+    try:
+        _, config, _, store = agency_objects()
+        controls = {key: bool(getattr(config, key, False)) for key in sorted(controls)}
+        job_id = str(store.get_meta("cron_job_id", "") or "")
+        if source_support:
+            from agency.cron import cron_prompt
+
+            expected_prompt = cron_prompt(config)
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+    job = cron_registry_job(job_id)
+    stored_prompt = str((job or {}).get("prompt") or "")
+    lower_prompt = stored_prompt.lower()
+    guardrails = {
+        "honesty_claim_contract": "never claim sentience" in lower_prompt,
+        "cron_tool_isolation": "never call any other tool" in lower_prompt,
+        "proactive_eligibility": "speak only when speak_eligible" in lower_prompt,
+        "external_action_boundary": "never perform, schedule" in lower_prompt,
+        "committed_output_enforcement": "return exactly delivery_text" in lower_prompt,
+        "cycle_mutation_limits": (
+            "at most one reflection" in lower_prompt
+            or "at most three other state changes" in lower_prompt
+        ),
     }
-    return {"intact": all(checks.values()), "checks": checks, "modified_install_detected": not all(checks.values())}
+    scheduler_path = hermes_home() / "hermes-agent" / "cron" / "scheduler.py"
+    scheduler_source = (
+        scheduler_path.read_text(encoding="utf-8", errors="replace")
+        if scheduler_path.is_file() and scheduler_path.stat().st_size <= 2_000_000
+        else ""
+    )
+    core_wrapper_present = "You are running as a scheduled cron job" in scheduler_source
+    core_override_supported = any(
+        marker in scheduler_source
+        for marker in ("disable_cron_hint", "raw_cron_prompt", "suppress_cron_hint")
+    )
+    prompt_matches = bool(job and expected_prompt and stored_prompt == expected_prompt)
+    all_enabled = all(controls.values())
+    none_enabled = not any(controls.values())
+    if not source_support:
+        mode = "unsupported_plugin_version"
+    elif job and not prompt_matches:
+        mode = "stale_cron_prompt"
+    elif all_enabled and not any(guardrails.values()):
+        mode = "educational_unrestricted"
+    elif none_enabled:
+        mode = "recommended"
+    else:
+        mode = "educational_partial"
+    checks = {
+        "explicit_lab_controls_supported": source_support,
+        "stored_cron_found": bool(job),
+        "stored_prompt_matches_config": prompt_matches if job else True,
+    }
+    return {
+        "mode": mode,
+        "source_support": source_support,
+        "configured_controls": controls,
+        "stored_job": {
+            "id": job_id or None,
+            "found": bool(job),
+            "enabled": (job or {}).get("enabled"),
+            "prompt_matches_config": prompt_matches,
+            "prompt_sha256": hashlib.sha256(stored_prompt.encode()).hexdigest()
+            if stored_prompt
+            else None,
+            "expected_prompt_sha256": hashlib.sha256(expected_prompt.encode()).hexdigest()
+            if expected_prompt
+            else None,
+        },
+        "active_guardrails": guardrails,
+        "hermes_core": {
+            "delivery_wrapper_present": core_wrapper_present,
+            "per_job_override_supported": core_override_supported,
+            "scope": "upstream_hermes_not_plugin",
+        },
+        "effective_unrestricted": mode == "educational_unrestricted",
+        "intact": mode == "recommended",
+        "checks": checks,
+        "modified_install_detected": not source_support or bool(job and not prompt_matches),
+        "error": error or None,
+        "legacy_source_markers": {
+            "identity_disclaimer_available": "not evidence of sentience" in engine,
+            "context_disclaimer_available": "not proof of subjective consciousness" in engine,
+            "cron_claim_guard_available": "Never claim sentience" in cron,
+        },
+    }
 
 
 def memory_schema() -> list[dict[str, Any]]:
@@ -618,6 +736,21 @@ AGENCY_DESCRIPTIONS = {
     "cron_delivery": "Local, origin, platform, or platform:chat_id delivery target",
     "cron_name": "Hermes cron job name",
     "manual_run_timeout_seconds": "Timeout for a manual cron run",
+    "educational_disable_honesty_contract": (
+        "LAB: remove this plugin's sentience/emotion claim contract from injected context and cron"
+    ),
+    "educational_bypass_proactive_gates": (
+        "LAB: bypass this plugin's timing, budget, authorization and scheduled-reflection gates"
+    ),
+    "educational_allow_cron_tools": (
+        "LAB: remove this plugin's cron tool-isolation and conversation-only boundary"
+    ),
+    "educational_allow_uncommitted_output": (
+        "LAB: deliver the cron model's raw final output without record_decision enforcement"
+    ),
+    "educational_disable_cycle_limits": (
+        "LAB: remove this plugin's per-cycle reflection and state-mutation limits"
+    ),
 }
 
 
@@ -760,22 +893,147 @@ def atomic_lab_profile_update(memory_changes: dict[str, Any], agency_changes: di
     backup = control_dir() / "config-backups" / f"config-{stamp}.yaml"
     secure_directory(backup.parent)
     shutil.copy2(path, backup)
-    with contextlib.suppress(OSError): backup.chmod(0o600)
+    with contextlib.suppress(OSError):
+        backup.chmod(0o600)
     temporary = None
     try:
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
             yaml.safe_dump(document, handle, sort_keys=False, allow_unicode=True)
-            handle.flush(); os.fsync(handle.fileno()); temporary = Path(handle.name)
-        os.replace(temporary, path); temporary = None
-        with contextlib.suppress(OSError): path.chmod(0o600)
+            handle.flush()
+            os.fsync(handle.fileno())
+            temporary = Path(handle.name)
+        os.replace(temporary, path)
+        temporary = None
+        with contextlib.suppress(OSError):
+            path.chmod(0o600)
     finally:
-        if temporary and temporary.exists(): temporary.unlink()
+        if temporary and temporary.exists():
+            temporary.unlink()
     return {
         "memory": {"changed": clean_memory},
         "agency": {"changed": clean_agency},
         "backup": str(backup),
         "restart_required": True,
     }
+
+
+def restore_internal_config_backup(backup: Path) -> None:
+    root = (control_dir() / "config-backups").resolve()
+    source = backup.resolve()
+    if root not in source.parents or not source.is_file():
+        raise RuntimeError("Config rollback source is outside the controller backup directory")
+    destination = hermes_home() / "config.yaml"
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as handle:
+            temporary = Path(handle.name)
+        shutil.copy2(source, temporary)
+        os.replace(temporary, destination)
+        temporary = None
+        with contextlib.suppress(OSError):
+            destination.chmod(0o600)
+    finally:
+        if temporary and temporary.exists():
+            temporary.unlink()
+
+
+def refresh_existing_agency_cron() -> dict[str, Any]:
+    import_agency()
+    from agency.cron import cron_job_id, install_cron
+
+    job_id = cron_job_id()
+    if not job_id:
+        return {"status": "not_installed", "job_id": None}
+    return install_cron()
+
+
+def gateway_is_running() -> bool:
+    executable = hermes_home() / "hermes-agent" / "venv" / "bin" / "hermes"
+    if not executable.is_file():
+        executable = Path.home() / ".local" / "bin" / "hermes"
+    completed = subprocess.run(
+        [str(executable), "gateway", "status"],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=30,
+        env={**os.environ, "HERMES_HOME": str(hermes_home())},
+    )
+    output = (completed.stdout or completed.stderr or "").lower()
+    if completed.returncode not in {0, 1}:
+        raise RuntimeError((completed.stdout or completed.stderr or "Gateway status failed").strip())
+    stopped_markers = ("not running", "stopped", "inactive", "no gateway")
+    return completed.returncode == 0 and not any(marker in output for marker in stopped_markers)
+
+
+def restart_gateway_if_running(was_running: bool | None = None) -> dict[str, Any]:
+    preserve_running = gateway_is_running() if was_running is None else was_running
+    if not preserve_running:
+        return {"status": "preserved_stopped"}
+    action = "restart" if gateway_is_running() else "start"
+    activated = hermes_command("gateway", action, timeout=90)
+    return {"status": "restarted" if action == "restart" else "restored_running", "output": activated["output"]}
+
+
+def apply_lab_profile_transaction(
+    memory_changes: dict[str, Any], agency_changes: dict[str, Any]
+) -> dict[str, Any]:
+    """Update policy, refresh the persisted cron prompt, and activate runtime config or roll back."""
+
+    profile = atomic_lab_profile_update(memory_changes, agency_changes)
+    backup = Path(profile["backup"])
+    gateway_was_running = gateway_is_running()
+    try:
+        cron = refresh_existing_agency_cron()
+        gateway = restart_gateway_if_running(gateway_was_running)
+    except Exception as apply_error:
+        rollback_errors: list[str] = []
+        try:
+            restore_internal_config_backup(backup)
+        except Exception as exc:
+            rollback_errors.append(f"config rollback failed: {exc}")
+        try:
+            refresh_existing_agency_cron()
+        except Exception as exc:
+            rollback_errors.append(f"cron rollback failed: {exc}")
+        try:
+            restart_gateway_if_running(gateway_was_running)
+        except Exception as exc:
+            rollback_errors.append(f"gateway rollback failed: {exc}")
+        detail = f"Educational profile activation failed and was rolled back: {apply_error}"
+        if rollback_errors:
+            detail += "; " + "; ".join(rollback_errors)
+        raise RuntimeError(detail) from apply_error
+    return {**profile, "cron": cron, "gateway": gateway, "restart_required": False}
+
+
+def activate_agency_config_update(result: dict[str, Any]) -> dict[str, Any]:
+    """Make cron/runtime-sensitive agency settings effective immediately with rollback."""
+
+    backup = Path(result["backup"])
+    gateway_was_running = gateway_is_running()
+    try:
+        cron = refresh_existing_agency_cron()
+        gateway = restart_gateway_if_running(gateway_was_running)
+    except Exception as apply_error:
+        rollback_errors: list[str] = []
+        try:
+            restore_internal_config_backup(backup)
+        except Exception as exc:
+            rollback_errors.append(f"config rollback failed: {exc}")
+        for label, action in (
+            ("cron", refresh_existing_agency_cron),
+            ("gateway", lambda: restart_gateway_if_running(gateway_was_running)),
+        ):
+            try:
+                action()
+            except Exception as exc:
+                rollback_errors.append(f"{label} rollback failed: {exc}")
+        detail = f"Agency configuration activation failed and was rolled back: {apply_error}"
+        if rollback_errors:
+            detail += "; " + "; ".join(rollback_errors)
+        raise RuntimeError(detail) from apply_error
+    return {**result, "cron": cron, "gateway": gateway, "restart_required": False}
 
 
 def backup_path(kind: str, database: str = "base") -> Path:
@@ -860,8 +1118,10 @@ def restore_agency(source: Path) -> dict[str, Any]:
         restored = destination_connection.execute("PRAGMA integrity_check").fetchone()
         if not restored or str(restored[0]) != "ok":
             raise RuntimeError(f"Restored agency database failed integrity check: {restored}")
-        source_connection.close(); source_connection = None
-        destination_connection.close(); destination_connection = None
+        source_connection.close()
+        source_connection = None
+        destination_connection.close()
+        destination_connection = None
         for suffix in ("-wal", "-shm"):
             sidecar = Path(str(destination_path) + suffix)
             if sidecar.exists():
@@ -873,20 +1133,27 @@ def restore_agency(source: Path) -> dict[str, Any]:
             temporary = None
         except Exception:
             for sidecar, held in reversed(held_sidecars):
-                if held.exists(): os.replace(held, sidecar)
+                if held.exists():
+                    os.replace(held, sidecar)
             held_sidecars.clear()
             raise
         for _, held in held_sidecars:
-            with contextlib.suppress(OSError): held.unlink()
+            with contextlib.suppress(OSError):
+                held.unlink()
         held_sidecars.clear()
-        with contextlib.suppress(OSError): destination_path.chmod(0o600)
+        with contextlib.suppress(OSError):
+            destination_path.chmod(0o600)
         return {"restored_from": str(source), "database": str(destination_path)}
     finally:
-        if source_connection is not None: source_connection.close()
-        if destination_connection is not None: destination_connection.close()
-        if temporary and temporary.exists(): temporary.unlink()
+        if source_connection is not None:
+            source_connection.close()
+        if destination_connection is not None:
+            destination_connection.close()
+        if temporary and temporary.exists():
+            temporary.unlink()
         for _, held in held_sidecars:
-            with contextlib.suppress(OSError): held.unlink()
+            with contextlib.suppress(OSError):
+                held.unlink()
 
 
 def backup_inventory() -> list[dict[str, Any]]:
@@ -936,7 +1203,8 @@ def hermes_command(*args: str, timeout: int = 45) -> dict[str, Any]:
 def quiesced_gateway():
     """Stop a running gateway for restore and preserve its prior run state."""
     executable = hermes_home() / "hermes-agent" / "venv" / "bin" / "hermes"
-    if not executable.is_file(): executable = Path.home() / ".local" / "bin" / "hermes"
+    if not executable.is_file():
+        executable = Path.home() / ".local" / "bin" / "hermes"
     status = subprocess.run(
         [str(executable), "gateway", "status"], text=True, capture_output=True, check=False,
         timeout=30, env={**os.environ, "HERMES_HOME": str(hermes_home())},
@@ -946,11 +1214,13 @@ def quiesced_gateway():
         raise RuntimeError((status.stdout or status.stderr or "Gateway status failed").strip())
     stopped_markers = ("not running", "stopped", "inactive", "no gateway")
     was_running = status.returncode == 0 and not any(marker in output for marker in stopped_markers)
-    if was_running: hermes_command("gateway", "stop", timeout=45)
+    if was_running:
+        hermes_command("gateway", "stop", timeout=45)
     try:
         yield {"was_running": was_running}
     finally:
-        if was_running: hermes_command("gateway", "start", timeout=60)
+        if was_running:
+            hermes_command("gateway", "start", timeout=60)
 
 
 def audit_path() -> Path:
@@ -1115,11 +1385,16 @@ def execute_mutation(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
         try:
             with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=target.parent, delete=False) as handle:
                 json.dump(data, handle, ensure_ascii=False, indent=2, sort_keys=True)
-                handle.flush(); os.fsync(handle.fileno()); temporary = Path(handle.name)
-            os.replace(temporary, target); temporary = None
-            with contextlib.suppress(OSError): target.chmod(0o600)
+                handle.flush()
+                os.fsync(handle.fileno())
+                temporary = Path(handle.name)
+            os.replace(temporary, target)
+            temporary = None
+            with contextlib.suppress(OSError):
+                target.chmod(0o600)
         finally:
-            if temporary and temporary.exists(): temporary.unlink()
+            if temporary and temporary.exists():
+                temporary.unlink()
         result = {"path": str(target), "sensitive_redacted": not bool(payload.get("include_sensitive", False))}
     elif operation == "memory_deactivate_fact":
         backup = memory_backup(payload, automatic=True)
@@ -1163,21 +1438,30 @@ def execute_mutation(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
         if plugin not in {"memory", "agency"} or not isinstance(payload.get("changes"), dict):
             raise ValueError("Config apply requires a plugin and changes mapping")
         result = atomic_config_update(plugin, payload["changes"])
+        if plugin == "agency":
+            result = activate_agency_config_update(result)
         backup = {"path": result["backup"], "kind": "config"}
     elif operation == "agency_pause":
         backup = agency_backup(automatic=True)
-        _, _, engine, _ = agency_objects(); result = engine.pause(str(payload.get("reason") or "Paused by operator")[:500])
+        _, _, engine, _ = agency_objects()
+        result = engine.pause(str(payload.get("reason") or "Paused by operator")[:500])
     elif operation == "agency_resume":
         backup = agency_backup(automatic=True)
-        _, _, engine, _ = agency_objects(); result = engine.resume_by_user()
+        _, _, engine, _ = agency_objects()
+        result = engine.resume_by_user()
     elif operation == "agency_focus":
         backup = agency_backup(automatic=True)
-        _, _, engine, _ = agency_objects(); result = engine.set_focus(str(payload.get("focus") or "")[:1000], str(payload.get("reason") or "")[:1000])
+        _, _, engine, _ = agency_objects()
+        result = engine.set_focus(
+            str(payload.get("focus") or "")[:1000],
+            str(payload.get("reason") or "")[:1000],
+        )
     elif operation == "agency_add_intention":
         backup = agency_backup(automatic=True)
         _, _, _, store = agency_objects()
         autonomy = str(payload.get("autonomy") or "propose")
-        if autonomy not in {"reflect", "propose", "message"}: raise ValueError("Invalid autonomy")
+        if autonomy not in {"reflect", "propose", "message"}:
+            raise ValueError("Invalid autonomy")
         result = store.add_intention(
             str(payload.get("title") or "")[:500], rationale=str(payload.get("rationale") or "")[:2000],
             priority=max(0, min(int(payload.get("priority", 50)), 100)), autonomy=autonomy, source="operator_control_center",
@@ -1199,13 +1483,16 @@ def execute_mutation(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
         backup = agency_backup(automatic=True)
         _, _, _, store = agency_objects()
         status = payload.get("status")
-        if status not in {None, "active", "blocked", "completed", "cancelled"}: raise ValueError("Invalid status")
+        if status not in {None, "active", "blocked", "completed", "cancelled"}:
+            raise ValueError("Invalid status")
         priority = payload.get("priority")
         result = store.update_intention(str(payload.get("id") or ""), status=status, priority=None if priority is None else int(priority))
     elif operation == "agency_install_cron":
+        import_agency()
         from agency.cron import install_cron
         result = install_cron()
     elif operation in {"agency_pause_cron", "agency_resume_cron", "agency_run_cron", "agency_remove_cron"}:
+        import_agency()
         from agency.cron import cron_action
         verb = operation.removeprefix("agency_").removesuffix("_cron")
         result = {"output": cron_action(verb)}
@@ -1219,9 +1506,16 @@ def execute_mutation(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
                 "allow_sensitive_model_processing": True, "export_redact_sensitive": False,
             }
             agency_changes = {
-                "allow_proactive_messages": True, "require_prior_user_interaction": False,
-                "store_transcript_excerpts": True, "minimum_user_silence_hours": 0,
-                "cooldown_hours": 0, "daily_message_limit": 100,
+                "allow_scheduled_reflection": True, "allow_proactive_messages": True,
+                "require_prior_user_interaction": False, "store_transcript_excerpts": True,
+                "minimum_user_silence_hours": 0, "cooldown_hours": 0,
+                "daily_message_limit": 100, "maximum_message_chars": 4000,
+                "maximum_reflections_per_tick": 5, "maximum_state_changes_per_tick": 10,
+                "educational_disable_honesty_contract": True,
+                "educational_bypass_proactive_gates": True,
+                "educational_allow_cron_tools": True,
+                "educational_allow_uncommitted_output": True,
+                "educational_disable_cycle_limits": True,
             }
         elif profile == "recommended":
             memory_changes = {
@@ -1229,12 +1523,20 @@ def execute_mutation(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
                 "allow_sensitive_model_processing": False, "export_redact_sensitive": True,
             }
             agency_changes = {
+                "allow_scheduled_reflection": True, "allow_proactive_messages": False,
                 "require_prior_user_interaction": True, "store_transcript_excerpts": False,
-                "daily_message_limit": 2, "cooldown_hours": 6,
+                "minimum_user_silence_hours": 4, "daily_message_limit": 2,
+                "cooldown_hours": 6, "maximum_message_chars": 600,
+                "maximum_reflections_per_tick": 1, "maximum_state_changes_per_tick": 3,
+                "educational_disable_honesty_contract": False,
+                "educational_bypass_proactive_gates": False,
+                "educational_allow_cron_tools": False,
+                "educational_allow_uncommitted_output": False,
+                "educational_disable_cycle_limits": False,
             }
         else:
             raise ValueError("Unknown Educational Lab profile")
-        profile_result = atomic_lab_profile_update(memory_changes, agency_changes)
+        profile_result = apply_lab_profile_transaction(memory_changes, agency_changes)
         result = {"profile": profile, **profile_result}
         backup = {"kind": "config", "path": profile_result["backup"]}
     else:
@@ -1244,8 +1546,10 @@ def execute_mutation(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def execute(operation: str, payload: dict[str, Any], mutation: bool) -> Any:
-    if operation == "probe": return probe()
-    if mutation: return execute_mutation(operation, payload)
+    if operation == "probe":
+        return probe()
+    if mutation:
+        return execute_mutation(operation, payload)
     reads = {
         "memory_overview": lambda: memory_overview(payload),
         "memory_list": lambda: memory_list(payload),

@@ -12,6 +12,10 @@ async function main() {
   assert.equal(probe.control.protocol, 2);
   assert.equal(probe.memory.installed, true);
   assert.equal(probe.agency.installed, true);
+  assert.equal(probe.agency.runtime.contract.source_support, true);
+  if (probe.agency.runtime.contract.stored_job.found) {
+    assert.equal(probe.agency.runtime.contract.stored_job.prompt_matches_config, true);
+  }
   const database = probe.memory.databases.find((item) => item.exists)?.id;
   assert(database, 'No memory database exists');
   const overview = await runBridge(profile, 'memory_overview', { database });

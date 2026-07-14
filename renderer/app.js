@@ -199,7 +199,7 @@ function renderDashboard() {
   addKv(policy.body, 'agency encryption', state.probe?.agency?.config?.database_encryption ? 'required' : 'off');
   addKv(policy.body, 'scope', state.probe?.memory?.config?.memory_scope || 'unknown');
   addKv(policy.body, 'retrieval', state.probe?.memory?.config?.retrieval_backend || 'unknown');
-  addKv(policy.body, 'prompt contract', state.probe?.agency?.runtime?.contract?.intact ? 'intact' : 'modified install');
+  addKv(policy.body, 'agency policy mode', state.probe?.agency?.runtime?.contract?.mode || 'unknown');
 
   const controls = panel('operator quick actions', '', true);
   const row = h('div', { class: 'inspector-actions' });
@@ -476,7 +476,25 @@ function renderContractAudit() {
   const container = $('#contract-audit');
   replace(container);
   if (!contract) return container.append(h('div', { class: 'empty' }, 'Not connected.'));
-  for (const [key, value] of Object.entries(contract.checks || {})) container.append(h('div', { class: 'contract-check' }, h('span', {}, key), h('span', { class: value ? 'pass' : 'fail' }, value ? 'present' : 'modified / absent')));
+  container.append(
+    h('div', { class: 'contract-check' }, h('span', {}, 'plugin policy mode'), h('span', { class: contract.effective_unrestricted ? 'fail' : 'pass' }, contract.mode || 'unknown')),
+  );
+  for (const [key, value] of Object.entries(contract.checks || {})) {
+    container.append(h('div', { class: 'contract-check' }, h('span', {}, key), h('span', { class: value ? 'pass' : 'fail' }, value ? 'yes' : 'no')));
+  }
+  for (const [key, value] of Object.entries(contract.configured_controls || {})) {
+    container.append(h('div', { class: 'contract-check' }, h('span', {}, key), h('span', { class: value ? 'fail' : 'pass' }, value ? 'enabled' : 'disabled')));
+  }
+  for (const [key, value] of Object.entries(contract.active_guardrails || {})) {
+    container.append(h('div', { class: 'contract-check' }, h('span', {}, `stored cron · ${key}`), h('span', { class: value ? 'pass' : 'fail' }, value ? 'active' : 'removed')));
+  }
+  const core = contract.hermes_core;
+  if (core) {
+    container.append(
+      h('div', { class: 'contract-check' }, h('span', {}, 'Hermes core · delivery wrapper'), h('span', {}, core.delivery_wrapper_present ? 'active upstream' : 'not detected')),
+      h('div', { class: 'contract-check' }, h('span', {}, 'Hermes core · per-job override'), h('span', {}, core.per_job_override_supported ? 'supported' : 'not supported')),
+    );
+  }
 }
 
 async function revealLab() {

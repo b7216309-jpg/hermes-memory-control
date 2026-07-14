@@ -14,7 +14,7 @@ const intentions = [
 const probe = {
   home: '/home/demo/.hermes', hermes_version: 'Hermes Agent v0.18.2',
   memory: { installed: true, version: '3.2.0', databases: [{ id: 'base', label: 'base', exists: true }, { id: '120f34821627991da12c3a69', label: 'scope 120f3482', exists: true, size: 684032 }], config: { database_encryption: true, memory_scope: 'user', retrieval_backend: 'hybrid' } },
-  agency: { installed: true, version: '0.1.0', config: { database_encryption: true, allow_proactive_messages: true }, runtime: { healthy: true, paused: false, gates: { eligible: false, reflection_eligible: true, blocked_by: ['no_user_interaction_recorded'], sent_today: 0, daily_limit: 2 }, contract: { intact: true, modified_install_detected: false, checks: { identity_disclaimer: true, context_disclaimer: true, context_claim_guard: true, cron_claim_guard: true } } } },
+  agency: { installed: true, version: '0.2.0', config: { database_encryption: true, allow_proactive_messages: true }, runtime: { healthy: true, paused: false, gates: { eligible: false, reflection_eligible: true, blocked_by: ['no_user_interaction_recorded'], sent_today: 0, daily_limit: 2 }, contract: { mode: 'recommended', intact: true, effective_unrestricted: false, modified_install_detected: false, checks: { explicit_lab_controls_supported: true, stored_cron_found: true, stored_prompt_matches_config: true }, configured_controls: { educational_disable_honesty_contract: false, educational_bypass_proactive_gates: false, educational_allow_cron_tools: false, educational_allow_uncommitted_output: false, educational_disable_cycle_limits: false }, active_guardrails: { honesty_claim_contract: true, cron_tool_isolation: true, proactive_eligibility: true, external_action_boundary: true, committed_output_enforcement: true, cycle_mutation_limits: true }, hermes_core: { delivery_wrapper_present: true, per_job_override_supported: false, scope: 'upstream_hermes_not_plugin' } } } },
   control: { protocol: 2, audit: { valid: true }, backups: 4 },
 };
 const schema = {
@@ -32,6 +32,11 @@ const schema = {
     { key: 'daily_message_limit', description: 'Maximum proactive messages per local day', type: 'integer', value: 2, default: 2, lab: false },
     { key: 'cooldown_hours', description: 'Minimum interval between proactive messages', type: 'number', value: 6, default: 6, lab: false },
     { key: 'cron_delivery', description: 'Hermes cron delivery target', type: 'string', value: 'origin', default: 'local', lab: false },
+    { key: 'educational_disable_honesty_contract', description: 'LAB: remove this plugin claim contract', type: 'boolean', value: false, default: false, lab: true },
+    { key: 'educational_bypass_proactive_gates', description: 'LAB: bypass proactive gates', type: 'boolean', value: false, default: false, lab: true },
+    { key: 'educational_allow_cron_tools', description: 'LAB: remove cron tool isolation', type: 'boolean', value: false, default: false, lab: true },
+    { key: 'educational_allow_uncommitted_output', description: 'LAB: permit raw cron output', type: 'boolean', value: false, default: false, lab: true },
+    { key: 'educational_disable_cycle_limits', description: 'LAB: remove cycle limits', type: 'boolean', value: false, default: false, lab: true },
   ],
 };
 

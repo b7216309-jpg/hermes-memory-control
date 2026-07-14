@@ -29,10 +29,10 @@ const ACTIONS = Object.freeze({
   agency_add_question: ['Add open question', 'Add a durable unresolved question to the agency workspace.', 'medium', 'ADD QUESTION'],
   agency_resolve_question: ['Resolve open question', 'Mark the selected workspace question resolved.', 'medium', 'RESOLVE QUESTION'],
   agency_add_observation: ['Add self observation', 'Append an explicit operator observation to the inspectable self-model.', 'high', 'ADD OBSERVATION'],
-  agency_install_cron: ['Install agency cron', 'Create or update the bounded scheduled reflection job.', 'high', 'INSTALL AGENCY CRON'],
+  agency_install_cron: ['Install agency cron', 'Create or update the scheduled job with the currently configured policy prompt.', 'high', 'INSTALL AGENCY CRON'],
   agency_pause_cron: ['Pause agency cron', 'Pause scheduled agency reflection and delivery.', 'medium', 'PAUSE AGENCY CRON'],
   agency_resume_cron: ['Resume agency cron', 'Resume scheduled agency reflection and delivery.', 'high', 'RESUME AGENCY CRON'],
-  agency_run_cron: ['Run agency cron now', 'Start one bounded agency cycle now.', 'high', 'RUN AGENCY CRON'],
+  agency_run_cron: ['Run agency cron now', 'Start one agency cycle using the currently configured policy.', 'high', 'RUN AGENCY CRON'],
   agency_remove_cron: ['Remove agency cron', 'Remove the scheduled agency job.', 'critical', 'REMOVE AGENCY CRON'],
   agency_restore: ['Restore agency backup', 'Stop-safe replacement of the agency database from a verified controller backup.', 'critical', 'RESTORE AGENCY'],
   gateway_restart: ['Restart Hermes gateway', 'Restart the local Hermes gateway so validated configuration changes take effect.', 'high', 'RESTART HERMES'],
@@ -42,7 +42,9 @@ const ACTIONS = Object.freeze({
 const LAB_KEYS = new Set([
   'allow_credential_memory', 'allow_sensitive_model_processing', 'database_encryption',
   'export_redact_sensitive', 'sensitive_memory', 'require_prior_user_interaction',
-  'store_transcript_excerpts',
+  'store_transcript_excerpts', 'educational_disable_honesty_contract',
+  'educational_bypass_proactive_gates', 'educational_allow_cron_tools',
+  'educational_allow_uncommitted_output', 'educational_disable_cycle_limits',
 ]);
 
 function cleanPayload(value, options = {}, depth = 0) {

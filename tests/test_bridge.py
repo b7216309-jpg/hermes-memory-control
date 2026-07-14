@@ -8,7 +8,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest import mock
 
 
@@ -187,6 +187,84 @@ class BridgeSafetyTests(unittest.TestCase):
             with bridge.quiesced_gateway() as state:
                 self.assertTrue(state["was_running"])
         self.assertEqual(command.call_args_list, [mock.call("gateway", "stop", timeout=45), mock.call("gateway", "start", timeout=60)])
+
+    def test_cron_registry_audit_selects_only_recorded_job(self):
+        directory = self.home / "cron"
+        directory.mkdir()
+        (directory / "jobs.json").write_text(
+            json.dumps(
+                {
+                    "jobs": [
+                        {"id": "other", "prompt": "unrelated"},
+                        {"id": "agency-job", "prompt": "expected", "enabled": True},
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.assertEqual(bridge.cron_registry_job("agency-job")["prompt"], "expected")
+        self.assertIsNone(bridge.cron_registry_job("missing"))
+
+    def test_lab_profile_transaction_refreshes_cron_and_runtime(self):
+        backup = self.home / "control-center" / "config-backups" / "config.yaml"
+        with mock.patch.object(
+            bridge,
+            "atomic_lab_profile_update",
+            return_value={"backup": str(backup), "restart_required": True},
+        ), mock.patch.object(
+            bridge, "refresh_existing_agency_cron", return_value={"status": "updated"}
+        ) as refresh, mock.patch.object(
+            bridge, "restart_gateway_if_running", return_value={"status": "restarted"}
+        ) as restart, mock.patch.object(bridge, "gateway_is_running", return_value=True):
+            result = bridge.apply_lab_profile_transaction({}, {})
+        refresh.assert_called_once_with()
+        restart.assert_called_once_with(True)
+        self.assertFalse(result["restart_required"])
+        self.assertEqual(result["cron"]["status"], "updated")
+
+    def test_lab_profile_transaction_rolls_back_on_cron_refresh_failure(self):
+        backup = self.home / "control-center" / "config-backups" / "config.yaml"
+        with mock.patch.object(
+            bridge,
+            "atomic_lab_profile_update",
+            return_value={"backup": str(backup), "restart_required": True},
+        ), mock.patch.object(
+            bridge,
+            "refresh_existing_agency_cron",
+            side_effect=[RuntimeError("refresh failed"), {"status": "updated"}],
+        ), mock.patch.object(bridge, "restart_gateway_if_running") as restart, mock.patch.object(
+            bridge, "restore_internal_config_backup"
+        ) as restore, mock.patch.object(bridge, "gateway_is_running", return_value=True):
+            with self.assertRaisesRegex(RuntimeError, "rolled back"):
+                bridge.apply_lab_profile_transaction({}, {})
+        restore.assert_called_once_with(backup)
+        restart.assert_called_once_with(True)
+
+    def test_gateway_activation_restores_original_running_state(self):
+        with mock.patch.object(bridge, "gateway_is_running", return_value=False), mock.patch.object(
+            bridge, "hermes_command", return_value={"output": "started"}
+        ) as command:
+            result = bridge.restart_gateway_if_running(True)
+        command.assert_called_once_with("gateway", "start", timeout=90)
+        self.assertEqual(result["status"], "restored_running")
+
+        with mock.patch.object(bridge, "hermes_command") as command:
+            self.assertEqual(
+                bridge.restart_gateway_if_running(False)["status"], "preserved_stopped"
+            )
+        command.assert_not_called()
+
+    def test_standalone_cron_action_bootstraps_installed_agency_import(self):
+        package = ModuleType("agency")
+        package.__path__ = []
+        cron = ModuleType("agency.cron")
+        cron.cron_action = lambda verb: f"ran {verb}"
+        with mock.patch.dict(
+            "sys.modules", {"agency": package, "agency.cron": cron}
+        ), mock.patch.object(bridge, "import_agency") as bootstrap:
+            result = bridge.execute_mutation("agency_run_cron", {})
+        bootstrap.assert_called_once_with()
+        self.assertEqual(result["result"]["output"], "ran run")
 
 
 if __name__ == "__main__":

@@ -43,7 +43,7 @@ The real integration suite currently covers:
 
 - Hermes Agent `0.18.2`;
 - Consolidating Local Memory `3.2.0`;
-- Conscious Agency `0.1.0`;
+- Conscious Agency `0.2.0`;
 - encrypted base and user-scoped databases;
 - Electron `43`.
 
@@ -108,7 +108,8 @@ and exact proactive blockers. It can:
 - add and resolve questions;
 - append explicit self-observations;
 - pause or operator-resume agency behavior;
-- install/update, run, pause, resume or remove the bounded agency cron.
+- install/update, run, pause, resume or remove the agency cron using its currently configured
+  safe or Educational Lab policy.
 
 Reflections, decisions and operational events are inspectable immutable ledgers. This preserves
 their value as evidence of what actually happened.
@@ -184,7 +185,7 @@ menu is a security boundary.
 Reveal it with either:
 
 - `Ctrl+Shift+L`; or
-- seven clicks on `v2.0` in the title bar.
+- seven clicks on `v2.1` in the title bar.
 
 Then type:
 
@@ -202,15 +203,33 @@ The **Unrestricted research** profile atomically changes both plugin sections to
 - permit unredacted memory exports;
 - store bounded agency transcript excerpts;
 - remove prior-interaction, cooldown and silence timing gates;
-- raise the daily proactive-message budget.
+- raise the daily proactive-message budget;
+- remove the Conscious Agency honesty/claim contract;
+- bypass the plugin's proactive eligibility gates;
+- remove cron tool isolation and the conversation-only boundary;
+- remove per-cycle reflection and state-change limits;
+- allow the cron model's uncommitted final output to pass through.
 
-Database encryption stays on. **Restore recommended policy** atomically returns the privacy and
-timing settings to conservative values. Individual Lab-marked settings can also be staged.
+Database encryption stays on. Hermes/provider/platform/OS permissions and operator pause remain
+authoritative. **Restore recommended policy** atomically returns every privacy, timing, prompt,
+tool, mutation and output setting to conservative defaults. Individual Lab-marked settings can
+also be staged.
 
-The controller audits whether sentience/emotion prompt-contract strings are present in the
-installed agency build. It does not automate brittle source-code patching. An experimental install
-can remain modified and will be reported as such; durable policy experiments should become
-explicit plugin configuration with tests and a reversible migration.
+The profile is one rollback-protected operation: validate both plugin sections, back up
+`config.yaml`, atomically replace it, refresh the already-installed Hermes cron job, restart the
+gateway if it was running, and then audit the result. If cron refresh or activation fails, the
+controller restores the prior config and prompt. It never silently creates a missing cron job.
+
+The effective-policy audit reads the recorded agency job ID, hashes the prompt actually stored in
+`~/.hermes/cron/jobs.json`, compares it with the prompt generated from current plugin configuration,
+and reports every remaining plugin-level cron guardrail. Prompt text itself is never copied into the
+controller audit log.
+
+Hermes 0.18.2 also prepends a scheduler-wide delivery wrapper to every cron prompt. It explains
+automatic delivery, tells the model not to duplicate delivery with `send_message`, and defines
+`[SILENT]`. This is not stored in the job and has no supported per-job disable switch in that Hermes
+release. Control Center reports it separately as **Hermes core · delivery wrapper** and never
+mislabels plugin-level unrestricted mode as removal of upstream Hermes behavior.
 
 ## Architecture and trust boundary
 
@@ -317,10 +336,16 @@ npm run test:wsl
 
 An incompatible table stays inaccessible rather than falling back to raw SQLite behavior.
 
-### Prompt contract shows modified install
+### Agency policy shows `stale_cron_prompt`
 
-This is an audit result, not a database error. It means one or more known honesty/claim-guard
-strings are absent from the installed agency Python files. The controller does not overwrite them.
+The cron job contains an older prompt snapshot than the installed plugin would generate. Use
+**Agency → install/update cron**, or reapply the desired Lab/recommended profile. Version 2.1
+refreshes the prompt automatically whenever agency configuration is changed through the controller.
+
+### Agency policy shows `unsupported_plugin_version`
+
+Install Conscious Agency 0.2 or newer. Older source-patched builds do not expose the explicit,
+auditable Educational Lab controls required for safe/reversible profile changes.
 
 ## License
 

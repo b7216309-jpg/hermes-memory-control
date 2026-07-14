@@ -10,7 +10,7 @@
 <body>
   <div id="app">
     <header id="topbar">
-      <div class="brand"><span class="brand-mark">H:</span><strong>control.center</strong><span class="version" id="version-trigger">v2.0</span></div>
+      <div class="brand"><span class="brand-mark">H:</span><strong>control.center</strong><span class="version" id="version-trigger">v2.1</span></div>
       <div class="top-health"><span class="pulse" id="health-pulse"></span><span id="top-status">disconnected</span><select id="theme-select" aria-label="Theme"><option value="gruvbox">gruvbox</option><option value="nord">nord</option><option value="forest">forest</option></select></div>
       <div class="window-controls">
         <button id="win-min" aria-label="Minimize">_</button><button id="win-max" aria-label="Maximize">□</button><button id="win-close" aria-label="Close">×</button>
@@ -78,8 +78,8 @@
           <div class="lab-warning"><strong>EDUCATIONAL LAB</strong><span>High-risk research settings. Every change still requires a backup, exact confirmation, and hash-chained audit.</span></div>
           <div class="view-body lab-grid">
             <div class="panel"><div class="panel-title red">operator unlock</div><p>Unlocks high-risk controls for 15 minutes. Obscurity is not the security boundary.</p><input id="lab-phrase" placeholder="type the educational lab phrase" autocomplete="off"><button class="button danger" id="lab-unlock">UNLOCK SESSION</button><div class="mono-note" id="lab-status">locked</div></div>
-            <div class="panel"><div class="panel-title red">research profiles</div><p><b>Unrestricted research</b> allows sensitive model processing, credential admission, unredacted exports, stored excerpts, and removes proactivity timing gates. Encryption stays on.</p><button class="button danger" id="lab-unrestricted">APPLY UNRESTRICTED RESEARCH</button><button class="button danger" id="lab-export-sensitive">EXPORT INCLUDING SENSITIVE</button><button class="button safe" id="lab-recommended">RESTORE RECOMMENDED POLICY</button></div>
-            <div class="panel"><div class="panel-title amber">prompt contract audit</div><div id="contract-audit"></div><p>This controller detects installed-code modifications. Source-patching is intentionally not automated; policy experiments should be implemented as explicit plugin configuration, not brittle text replacement.</p></div>
+            <div class="panel"><div class="panel-title red">research profiles</div><p><b>Unrestricted research</b> allows sensitive model processing, credential admission, unredacted exports and stored excerpts. It also disables every Conscious Agency plugin-level cron guardrail: claim contract, proactive gates, tool isolation, mutation limits and committed-output enforcement. Encryption and normal Hermes permissions remain active.</p><button class="button danger" id="lab-unrestricted">APPLY UNRESTRICTED RESEARCH</button><button class="button danger" id="lab-export-sensitive">EXPORT INCLUDING SENSITIVE</button><button class="button safe" id="lab-recommended">RESTORE RECOMMENDED POLICY</button></div>
+            <div class="panel"><div class="panel-title amber">effective cron audit</div><div id="contract-audit"></div><p>The audit compares explicit plugin configuration with the prompt currently stored in Hermes. Profile changes refresh that job and restart a running gateway in one rollback-protected operation.</p></div>
             <div class="panel"><div class="panel-title amber">dangerous settings</div><p>Lab-marked fields are edited below and remain subject to plugin validation.</p><div id="lab-config"></div></div>
           </div>
         </section>

@@ -1,15 +1,17 @@
 'use strict';
 
+// PUBLIC DEMO DATA ONLY. Documentation screenshots must never use a live Hermes profile.
+
 const wait = (value) => new Promise((resolve) => setTimeout(() => resolve(structuredClone(value)), 80));
 const memorySources = { facts: 36, topics: 8, sessions: 14, preferences: 7, policies: 3, contradictions: 1, history: 112, links: 24, approvals: 0, pending: 0 };
 const facts = [
-  { id: 41, content: 'b7216309-jpg prefers concise answers with a warm, direct tone.', category: 'user_pref', importance: 9, confidence: .98, salience: .94, active: 1, sensitivity: 'normal', updated_at: '2026-07-14T18:21:10Z' },
-  { id: 39, content: 'Current project: Hermes Consolidating Local Memory.', category: 'project', importance: 10, confidence: .99, salience: .91, active: 1, sensitivity: 'normal', updated_at: '2026-07-14T18:11:04Z' },
-  { id: 35, content: 'Works with Windows, WSL2, GitHub, Hermes and local AI.', category: 'environment', importance: 8, confidence: .96, salience: .87, active: 1, sensitivity: 'normal', updated_at: '2026-07-14T17:55:42Z' },
+  { id: 41, content: 'The operator prefers concise technical summaries.', category: 'preference', importance: 9, confidence: .98, salience: .94, active: 1, sensitivity: 'normal', updated_at: '2026-01-15T12:21:10Z' },
+  { id: 39, content: 'Current project: evaluate a private knowledge assistant.', category: 'project', importance: 10, confidence: .99, salience: .91, active: 1, sensitivity: 'normal', updated_at: '2026-01-15T12:11:04Z' },
+  { id: 35, content: 'Development environment uses Linux, Git, and local AI tools.', category: 'environment', importance: 8, confidence: .96, salience: .87, active: 1, sensitivity: 'normal', updated_at: '2026-01-15T11:55:42Z' },
 ];
 const intentions = [
-  { id: 'e02318a4ecb44c56', title: 'Evaluate Conscious Agency in real Hermes conversations', priority: 90, status: 'active', autonomy: 'propose', source: 'operator', updated_at: '2026-07-14T17:47:45Z' },
-  { id: '5ce03f524da84f92', title: 'Ask b7216309-jpg for feedback after enough real usage', priority: 75, status: 'active', autonomy: 'message', source: 'operator', updated_at: '2026-07-14T17:47:46Z' },
+  { id: 'demo-intention-001', title: 'Evaluate continuity across synthetic conversations', priority: 90, status: 'active', autonomy: 'propose', source: 'demo', updated_at: '2026-01-15T11:47:45Z' },
+  { id: 'demo-intention-002', title: 'Request feedback after sufficient test coverage', priority: 75, status: 'active', autonomy: 'message', source: 'demo', updated_at: '2026-01-15T11:47:46Z' },
 ];
 const probe = {
   home: '/home/demo/.hermes', hermes_version: 'Hermes Agent v0.18.2',
@@ -50,13 +52,13 @@ export function createDemoApi() {
       if (action === 'probe') return wait(probe);
       if (action === 'memory_overview') return wait({ database: payload.database || 'base', doctor: { ok: true, integrity: ['ok'], database_size_bytes: 684032, pending_operations: 0, failed_operations: 0, source_counts: memorySources, dangling_references: { links: 0, associations: 0 } } });
       if (action === 'memory_list') return wait({ table: payload.table, columns: Object.keys(facts[0]), rows: facts });
-      if (action === 'agency_snapshot') return wait({ snapshot: { workspace: { focus: 'Make Hermes more self-aware, useful, and safely proactive', questions: [] }, runtime: { paused: false, consecutive_silent_ticks: 5 }, control_signals: { curiosity: 0, completion: .4, coherence: .8, social_contact: 0, caution: .9 }, intentions, reflections: [], decisions: [] }, gates: probe.agency.runtime.gates, meaningful_events: [] });
+      if (action === 'agency_snapshot') return wait({ snapshot: { workspace: { focus: 'Evaluate useful continuity with synthetic data', questions: [] }, runtime: { paused: false, consecutive_silent_ticks: 5 }, control_signals: { curiosity: 0, completion: .4, coherence: .8, social_contact: 0, caution: .9 }, intentions, reflections: [], decisions: [] }, gates: probe.agency.runtime.gates, meaningful_events: [] });
       if (action === 'agency_list') return wait({ table: payload.table, columns: Object.keys(intentions[0]), rows: intentions });
       if (action === 'config_schema') return wait(schema);
       if (action === 'backups_list') return wait([{ id: 'memory-20260714-184400-base.db', kind: 'memory', size: 684032, modified: '2026-07-14T18:44:00Z' }, { id: 'agency-20260714-184359.db', kind: 'agency', size: 81920, modified: '2026-07-14T18:43:59Z' }]);
       if (action === 'audit_list') return wait({ valid: true, events: [{ id: 'a31f', at: '2026-07-14T18:44:00Z', operation: 'memory_backup', hash: '7af32b52183f', result: { kind: 'memory' } }, { id: '91de', at: '2026-07-14T18:43:59Z', operation: 'agency_backup', hash: '1842d20c77a1', result: { kind: 'agency' } }] });
       if (action === 'wiki_list') return wait([{ id: 'index.md', title: 'Memory Index', size: 1400 }, { id: 'topics/hermes.md', title: 'Hermes', size: 920 }]);
-      if (action === 'wiki_read') return wait({ id: payload.id, markdown: '# Memory Index\n\nCompiled, local-only memory wiki.\n\n## Current projects\n\n- Hermes Consolidating Local Memory\n- Hermes Conscious Agency' });
+      if (action === 'wiki_read') return wait({ id: payload.id, markdown: '# Demo Memory Index\n\nSynthetic, local-only example data.\n\n## Current projects\n\n- Private knowledge assistant\n- Scheduled reflection experiment' });
       if (action === 'memory_graph') return wait({ nodes: [{ id: 'topic:1', type: 'topic', label: 'Hermes', importance: 9, salience: .9 }, ...facts.map((item) => ({ id: `fact:${item.id}`, type: 'fact', label: item.content, ...item })), { id: 'preference:1', type: 'preference', label: 'Concise answers', importance: 8, salience: .8 }], edges: facts.map((item) => ({ source: 'topic:1', target: `fact:${item.id}`, type: 'contains' })) });
       return wait({});
     },

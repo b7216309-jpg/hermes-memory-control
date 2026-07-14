@@ -13,7 +13,11 @@ Version 2 is an in-place security rewrite of the original Hermes Memory Control 
 compact terminal/Gruvbox visual language while removing the privileged renderer, raw SQL bridge,
 shell command construction, static temporary files, and old-schema assumptions.
 
-![Hermes Control Center overview](screenshots/dashboard-v2.png)
+![Hermes Control Center overview using synthetic demo data](screenshots/dashboard-anonymous.png)
+
+> **Screenshot privacy:** every screenshot is captured from the built-in synthetic demo API. It
+> contains no live Hermes profile, memory, filesystem path, identifier, endpoint, or secret. Never
+> capture documentation images from a connected Hermes installation.
 
 ## What it controls
 
@@ -28,7 +32,7 @@ shell command construction, static temporary files, and old-schema assumptions.
 | Backups | Controller-owned memory and agency backups | New backup and verified restore |
 | Audit | Append-only operation records and chain integrity | Local verification |
 
-![Memory ledger and inspector](screenshots/memory-v2.png)
+![Memory ledger and inspector using synthetic demo data](screenshots/memory-anonymous.png)
 
 ## Requirements
 
@@ -126,7 +130,7 @@ Encryption switches are displayed but read-only. Turning SQLCipher off in YAML d
 database; it only makes the store unreadable. Encryption changes therefore require a deliberate
 migration outside the normal config editor.
 
-![Schema-driven configuration editor](screenshots/config-v2.png)
+![Schema-driven configuration editor using synthetic demo data](screenshots/config-anonymous.png)
 
 ### Backup, restore and export
 
@@ -177,7 +181,7 @@ when the audit directory remains available.
 
 ## Educational Lab
 
-![Locked Educational Lab](screenshots/educational-lab-v2.png)
+![Locked Educational Lab using synthetic demo data](screenshots/educational-lab-anonymous.png)
 
 The Lab keeps high-risk research controls out of normal operation without pretending that a hidden
 menu is a security boundary.
@@ -270,7 +274,7 @@ See [SECURITY.md](SECURITY.md) for the full threat model and limits.
 
 ## Memory graph
 
-![Interactive 3D memory graph](screenshots/graph-v2.png)
+![Interactive 3D memory graph using synthetic demo data](screenshots/graph-anonymous.png)
 
 Topics are violet octahedrons, facts are orange particles and preferences are amber cubes. Link
 and contradiction edges are generated only between known nodes. The renderer receives bounded

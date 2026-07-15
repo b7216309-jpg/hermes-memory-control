@@ -25,7 +25,7 @@ const ACTIONS = Object.freeze({
   agency_resume: ['Resume agency', 'Resume operator-paused agency behavior.', 'high', 'RESUME AGENCY'],
   agency_focus: ['Change agency focus', 'Replace the persistent global focus and record the reason.', 'medium', 'CHANGE FOCUS'],
   agency_add_intention: ['Add agency intention', 'Create a durable operator intention.', 'medium', 'ADD INTENTION'],
-  agency_update_intention: ['Update agency intention', 'Change the selected intention status or priority.', 'medium', 'UPDATE INTENTION'],
+  agency_update_intention: ['Update agency intention', 'Change the selected intention status, priority, or ISO-8601 deadline.', 'medium', 'UPDATE INTENTION'],
   agency_add_question: ['Add open question', 'Add a durable unresolved question to the agency workspace.', 'medium', 'ADD QUESTION'],
   agency_resolve_question: ['Resolve open question', 'Mark the selected workspace question resolved.', 'medium', 'RESOLVE QUESTION'],
   agency_add_observation: ['Add self observation', 'Append an explicit operator observation to the inspectable self-model.', 'high', 'ADD OBSERVATION'],

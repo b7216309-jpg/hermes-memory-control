@@ -336,6 +336,12 @@ async function loadAgencyTable() {
       actions.push({ label: 'block', className: 'danger', run: () => mutate('agency_update_intention', { id: row.id, status: 'blocked' }) });
       actions.push({ label: 'cancel', className: 'danger', run: () => mutate('agency_update_intention', { id: row.id, status: 'cancelled' }) });
     }
+    if (tableName === 'intentions') {
+      actions.push({ label: 'set/clear due', run: () => {
+        const dueAt = window.prompt('ISO-8601 deadline (blank clears):', row.due_at || '');
+        if (dueAt !== null) void mutate('agency_update_intention', { id: row.id, due_at: dueAt });
+      } });
+    }
     renderInspector($('#agency-inspector'), tableName, row, actions);
   });
 }

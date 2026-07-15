@@ -51,4 +51,9 @@ test('screenshot demo profile is synthetic', () => {
   assert.match(demo, /PUBLIC DEMO DATA ONLY/);
   assert.match(demo, /\/home\/demo\/\.hermes/);
   assert.doesNotMatch(demo, /\/home\/(?!demo\/)[^'"\s]+\/\.hermes/i);
+  assert.match(demo, /deadc0de12345678cafefeed/);
+  assert.deepEqual(
+    [...demo.matchAll(/id: '([a-f0-9]{24})'/g)].map((match) => match[1]),
+    ['deadc0de12345678cafefeed'],
+  );
 });

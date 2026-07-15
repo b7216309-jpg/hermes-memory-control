@@ -1,6 +1,8 @@
 'use strict';
 
 const { app, BrowserWindow, ipcMain } = require('electron');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { discoverProfiles, runBridge } = require('./src/main/bridge');
 const {
@@ -13,6 +15,13 @@ const {
 
 let win;
 const smokeTest = process.argv.includes('--smoke-test');
+let smokeProfile = null;
+if (smokeTest) {
+  smokeProfile = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-control-smoke-'));
+  app.setPath('userData', path.join(smokeProfile, 'user-data'));
+  app.setPath('sessionData', path.join(smokeProfile, 'session-data'));
+  app.commandLine.appendSwitch('disk-cache-dir', path.join(smokeProfile, 'cache'));
+}
 let activeProfile = null;
 let labUnlockedUntil = 0;
 const plans = new Map();
@@ -174,3 +183,8 @@ app.whenReady().then(() => {
 });
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 app.on('window-all-closed', () => app.quit());
+app.on('quit', () => {
+  if (smokeProfile) {
+    try { fs.rmSync(smokeProfile, { recursive: true, force: true, maxRetries: 3 }); } catch { /* best effort */ }
+  }
+});

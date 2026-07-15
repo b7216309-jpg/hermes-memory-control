@@ -13,6 +13,9 @@ Version 2 is an in-place security rewrite of the original Hermes Memory Control 
 compact terminal/Gruvbox visual language while removing the privileged renderer, raw SQL bridge,
 shell command construction, static temporary files, and old-schema assumptions.
 
+Version 2.2 adds first-class temporal auditing for Memory 3.3 and deadline control for Agency 0.3.
+Temporal edits are validated as one coherent state and synchronized with linked timeline events.
+
 ![Hermes Control Center overview using synthetic demo data](screenshots/dashboard-anonymous.png)
 
 > **Screenshot privacy:** every screenshot is captured from the built-in synthetic demo API. It
@@ -46,8 +49,8 @@ shell command construction, static temporary files, and old-schema assumptions.
 The real integration suite currently covers:
 
 - Hermes Agent `0.18.2`;
-- Consolidating Local Memory `3.2.0`;
-- Conscious Agency `0.2.0`;
+- Consolidating Local Memory `3.3.0`;
+- Conscious Agency `0.3.0`;
 - encrypted base and user-scoped databases;
 - Electron `43`.
 
@@ -95,9 +98,11 @@ Saving an edit:
 1. creates an encrypted-compatible database backup;
 2. validates the table, row ID, field names, types and ranges;
 3. recomputes normalized content, fingerprint and signature for edited facts;
-4. applies one transaction;
-5. appends the change to the memory plugin's own history;
-6. appends the completed operation to the controller audit chain.
+4. validates temporal kind, finite timestamps, interval order, precision, confidence, and IANA timezone;
+5. synchronizes canonical temporal metadata and linked autobiographical timeline state;
+6. applies one transaction;
+7. appends the change to the memory plugin's own history;
+8. appends the completed operation to the controller audit chain.
 
 Use **Deactivate** for a reversible fact lifecycle change. Hard deletion is intentionally absent
 from the normal interface.
@@ -108,7 +113,7 @@ The **Agency** workspace exposes the current focus, unresolved questions, softwa
 and exact proactive blockers. It can:
 
 - set or clear focus;
-- create and complete/block/cancel intentions;
+- create and complete/block/cancel intentions, and set or clear their ISO-8601 deadlines;
 - add and resolve questions;
 - append explicit self-observations;
 - pause or operator-resume agency behavior;
@@ -189,7 +194,7 @@ menu is a security boundary.
 Reveal it with either:
 
 - `Ctrl+Shift+L`; or
-- seven clicks on `v2.1` in the title bar.
+- seven clicks on `v2.2` in the title bar.
 
 Then type:
 
@@ -343,12 +348,12 @@ An incompatible table stays inaccessible rather than falling back to raw SQLite 
 ### Agency policy shows `stale_cron_prompt`
 
 The cron job contains an older prompt snapshot than the installed plugin would generate. Use
-**Agency → install/update cron**, or reapply the desired Lab/recommended profile. Version 2.1
+**Agency → install/update cron**, or reapply the desired Lab/recommended profile. Version 2.2
 refreshes the prompt automatically whenever agency configuration is changed through the controller.
 
 ### Agency policy shows `unsupported_plugin_version`
 
-Install Conscious Agency 0.2 or newer. Older source-patched builds do not expose the explicit,
+Install Conscious Agency 0.3 or newer. Older source-patched builds do not expose the explicit,
 auditable Educational Lab controls required for safe/reversible profile changes.
 
 ## License

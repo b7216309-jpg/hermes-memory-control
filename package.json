@@ -1,6 +1,6 @@
 {
   "name": "hermes-memory-control",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Fail-safe desktop audit and control center for Hermes memory and conscious agency.",
   "main": "main.js",
   "author": "b7216309-jpg",

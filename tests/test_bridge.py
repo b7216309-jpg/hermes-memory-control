@@ -13,7 +13,9 @@ from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location("control_bridge", ROOT / "bridge" / "control_bridge.py")
+SPEC = importlib.util.spec_from_file_location(
+    "control_bridge", ROOT / "bridge" / "control_bridge.py"
+)
 bridge = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
 SPEC.loader.exec_module(bridge)
@@ -74,14 +76,19 @@ class BridgeSafetyTests(unittest.TestCase):
             bridge.hermes_home()
 
     def test_config_redaction_never_returns_secret_values(self):
-        value = bridge.redact_config({"api_key": "secret", "database_key_env": "KEY", "safe": 4})
+        value = bridge.redact_config(
+            {"api_key": "secret", "database_key_env": "KEY", "safe": 4}
+        )
         self.assertEqual(value["api_key"], "<redacted>")
         self.assertEqual(value["database_key_env"], "<redacted>")
         self.assertEqual(value["safe"], 4)
 
     def test_audit_safely_hashes_memory_text_and_nested_secrets(self):
         safe = bridge.audit_safe(
-            {"table": "facts", "changes": {"content": "private memory", "api_key": "secret"}}
+            {
+                "table": "facts",
+                "changes": {"content": "private memory", "api_key": "secret"},
+            }
         )
         self.assertEqual(safe["table"], "facts")
         self.assertEqual(safe["changes"]["content"]["chars"], len("private memory"))
@@ -89,7 +96,12 @@ class BridgeSafetyTests(unittest.TestCase):
         self.assertEqual(safe["changes"]["api_key"], "<redacted>")
 
     def test_memory_patch_is_allowlisted_typed_and_noop_aware(self):
-        current = {"content": "old", "importance": 5, "active": 1, "fingerprint": "immutable"}
+        current = {
+            "content": "old",
+            "importance": 5,
+            "active": 1,
+            "fingerprint": "immutable",
+        }
         clean = bridge.validate_memory_patch(
             "facts", {"content": "new", "importance": 8, "active": False}, current
         )
@@ -100,6 +112,151 @@ class BridgeSafetyTests(unittest.TestCase):
             bridge.validate_memory_patch("facts", {"importance": 99}, current)
         with self.assertRaises(ValueError):
             bridge.validate_memory_patch("facts", {"content": "old"}, current)
+
+    def test_temporal_fact_patch_enforces_cross_field_invariants(self):
+        current = {
+            "temporal_kind": "atemporal",
+            "event_at": 0.0,
+            "valid_from": 0.0,
+            "valid_until": 0.0,
+            "temporal_precision": "unknown",
+            "temporal_timezone": "",
+            "temporal_confidence": 0.0,
+        }
+        clean = bridge.validate_memory_patch(
+            "facts",
+            {
+                "temporal_kind": "scheduled",
+                "event_at": 1784185200.0,
+                "valid_until": 1784271600.0,
+                "temporal_precision": "minute",
+                "temporal_timezone": "Europe/Paris",
+                "temporal_confidence": 0.95,
+            },
+            current,
+        )
+        self.assertEqual(clean["temporal_kind"], "scheduled")
+        with self.assertRaisesRegex(ValueError, "require event_at"):
+            bridge.validate_memory_patch("facts", {"temporal_kind": "event"}, current)
+        with self.assertRaisesRegex(ValueError, "later than event_at"):
+            bridge.validate_memory_patch(
+                "facts",
+                {"temporal_kind": "scheduled", "event_at": 20.0, "valid_until": 10.0},
+                current,
+            )
+        with self.assertRaisesRegex(ValueError, "valid IANA timezone"):
+            bridge.validate_memory_patch(
+                "facts", {"temporal_timezone": "Mars/Olympus"}, current
+            )
+        with self.assertRaisesRegex(ValueError, "non-negative number"):
+            bridge.validate_memory_patch("facts", {"event_at": float("nan")}, current)
+
+    def test_temporal_memory_update_syncs_metadata_and_timeline(self):
+        class FakeStore:
+            def __init__(self):
+                self.connection = sqlite3.connect(":memory:")
+                self.connection.row_factory = sqlite3.Row
+                self.connection.execute(
+                    """CREATE TABLE facts(
+                        id INTEGER PRIMARY KEY, content TEXT, importance INTEGER,
+                        sensitivity TEXT, temporal_kind TEXT, event_at REAL,
+                        valid_from REAL, valid_until REAL, temporal_precision TEXT,
+                        temporal_timezone TEXT, temporal_confidence REAL,
+                        metadata_json TEXT, updated_at REAL, revision INTEGER
+                    )"""
+                )
+                self.connection.execute(
+                    "INSERT INTO facts VALUES (1, 'Synthetic inspection', 7, 'normal', "
+                    "'atemporal', 0, 0, 0, 'unknown', '', 0, '{}', 1, 1)"
+                )
+                self.connection.commit()
+                self.events = []
+                self.links = []
+                self.history = []
+
+            def _fetchone(self, sql, params=()):
+                row = self.connection.execute(sql, tuple(params)).fetchone()
+                if not row:
+                    return None
+                item = dict(row)
+                if "metadata_json" in item:
+                    item["metadata"] = json.loads(item.get("metadata_json") or "{}")
+                return item
+
+            def _execute(self, sql, params=()):
+                return self.connection.execute(sql, tuple(params))
+
+            @contextlib.contextmanager
+            def transaction(self):
+                self.connection.execute("BEGIN")
+                try:
+                    yield
+                except Exception:
+                    self.connection.rollback()
+                    raise
+                else:
+                    self.connection.commit()
+
+            def upsert_autobiographical_event(self, **values):
+                event = {"id": 91, **values}
+                self.events.append(event)
+                return event
+
+            def add_link(self, *values):
+                self.links.append(values)
+
+            def record_history(self, **values):
+                self.history.append(values)
+                return values
+
+        store = FakeStore()
+        columns = [
+            "id",
+            "content",
+            "importance",
+            "sensitivity",
+            "temporal_kind",
+            "event_at",
+            "valid_from",
+            "valid_until",
+            "temporal_precision",
+            "temporal_timezone",
+            "temporal_confidence",
+            "metadata_json",
+            "updated_at",
+            "revision",
+        ]
+        with (
+            mock.patch.object(
+                bridge, "memory_store", return_value=contextlib.nullcontext(store)
+            ),
+            mock.patch.object(bridge, "table_columns_memory", return_value=columns),
+        ):
+            result = bridge.memory_update_item(
+                {
+                    "database": "base",
+                    "table": "facts",
+                    "id": 1,
+                    "changes": {
+                        "temporal_kind": "scheduled",
+                        "event_at": 1784185200.0,
+                        "valid_until": 1784271600.0,
+                        "temporal_precision": "minute",
+                        "temporal_timezone": "Europe/Paris",
+                        "temporal_confidence": 0.95,
+                    },
+                }
+            )
+
+        self.assertEqual(result["item"]["metadata"]["temporal_kind"], "scheduled")
+        self.assertEqual(store.events[0]["event_key"], "fact-1")
+        self.assertEqual(
+            store.events[0]["metadata"]["temporal_timezone"], "Europe/Paris"
+        )
+        self.assertEqual(
+            store.links[0], ("fact", 1, "autobiographical_event", 91, "represented_by")
+        )
+        self.assertEqual(store.history[0]["action"], "operator_updated")
 
     def test_memory_update_is_transactional_and_records_plugin_history(self):
         class FakeStore:
@@ -138,13 +295,32 @@ class BridgeSafetyTests(unittest.TestCase):
                 return values
 
         store = FakeStore()
-        with mock.patch.object(bridge, "memory_store", return_value=contextlib.nullcontext(store)), mock.patch.object(
-            bridge,
-            "table_columns_memory",
-            return_value=["id", "title", "summary", "category", "importance", "salience", "sensitivity", "updated_at"],
+        with (
+            mock.patch.object(
+                bridge, "memory_store", return_value=contextlib.nullcontext(store)
+            ),
+            mock.patch.object(
+                bridge,
+                "table_columns_memory",
+                return_value=[
+                    "id",
+                    "title",
+                    "summary",
+                    "category",
+                    "importance",
+                    "salience",
+                    "sensitivity",
+                    "updated_at",
+                ],
+            ),
         ):
             result = bridge.memory_update_item(
-                {"database": "base", "table": "topics", "id": 1, "changes": {"title": "new", "importance": 9}}
+                {
+                    "database": "base",
+                    "table": "topics",
+                    "id": 1,
+                    "changes": {"title": "new", "importance": 9},
+                }
             )
         self.assertEqual(result["item"]["title"], "new")
         self.assertEqual(result["item"]["importance"], 9)
@@ -161,32 +337,44 @@ class BridgeSafetyTests(unittest.TestCase):
             connection.close()
         config = SimpleNamespace(database_encryption=False, db_path=destination)
         store = SimpleNamespace(_driver=sqlite3)
-        with mock.patch.object(bridge, "agency_objects", return_value=(None, config, None, store)):
+        with mock.patch.object(
+            bridge, "agency_objects", return_value=(None, config, None, store)
+        ):
             result = bridge.restore_agency(source)
         connection = sqlite3.connect(destination)
         try:
-            self.assertEqual(connection.execute("SELECT value FROM sample").fetchone()[0], "backup")
+            self.assertEqual(
+                connection.execute("SELECT value FROM sample").fetchone()[0], "backup"
+            )
         finally:
             connection.close()
         self.assertEqual(result["restored_from"], str(source))
 
     def test_quiesced_gateway_preserves_stopped_state(self):
         stopped = SimpleNamespace(returncode=1, stdout="Gateway not running", stderr="")
-        with mock.patch.object(bridge.subprocess, "run", return_value=stopped), mock.patch.object(
-            bridge, "hermes_command"
-        ) as command:
+        with (
+            mock.patch.object(bridge.subprocess, "run", return_value=stopped),
+            mock.patch.object(bridge, "hermes_command") as command,
+        ):
             with bridge.quiesced_gateway() as state:
                 self.assertFalse(state["was_running"])
         command.assert_not_called()
 
     def test_quiesced_gateway_restarts_only_when_it_was_running(self):
         running = SimpleNamespace(returncode=0, stdout="Gateway running", stderr="")
-        with mock.patch.object(bridge.subprocess, "run", return_value=running), mock.patch.object(
-            bridge, "hermes_command"
-        ) as command:
+        with (
+            mock.patch.object(bridge.subprocess, "run", return_value=running),
+            mock.patch.object(bridge, "hermes_command") as command,
+        ):
             with bridge.quiesced_gateway() as state:
                 self.assertTrue(state["was_running"])
-        self.assertEqual(command.call_args_list, [mock.call("gateway", "stop", timeout=45), mock.call("gateway", "start", timeout=60)])
+        self.assertEqual(
+            command.call_args_list,
+            [
+                mock.call("gateway", "stop", timeout=45),
+                mock.call("gateway", "start", timeout=60),
+            ],
+        )
 
     def test_cron_registry_audit_selects_only_recorded_job(self):
         directory = self.home / "cron"
@@ -207,15 +395,24 @@ class BridgeSafetyTests(unittest.TestCase):
 
     def test_lab_profile_transaction_refreshes_cron_and_runtime(self):
         backup = self.home / "control-center" / "config-backups" / "config.yaml"
-        with mock.patch.object(
-            bridge,
-            "atomic_lab_profile_update",
-            return_value={"backup": str(backup), "restart_required": True},
-        ), mock.patch.object(
-            bridge, "refresh_existing_agency_cron", return_value={"status": "updated"}
-        ) as refresh, mock.patch.object(
-            bridge, "restart_gateway_if_running", return_value={"status": "restarted"}
-        ) as restart, mock.patch.object(bridge, "gateway_is_running", return_value=True):
+        with (
+            mock.patch.object(
+                bridge,
+                "atomic_lab_profile_update",
+                return_value={"backup": str(backup), "restart_required": True},
+            ),
+            mock.patch.object(
+                bridge,
+                "refresh_existing_agency_cron",
+                return_value={"status": "updated"},
+            ) as refresh,
+            mock.patch.object(
+                bridge,
+                "restart_gateway_if_running",
+                return_value={"status": "restarted"},
+            ) as restart,
+            mock.patch.object(bridge, "gateway_is_running", return_value=True),
+        ):
             result = bridge.apply_lab_profile_transaction({}, {})
         refresh.assert_called_once_with()
         restart.assert_called_once_with(True)
@@ -224,26 +421,33 @@ class BridgeSafetyTests(unittest.TestCase):
 
     def test_lab_profile_transaction_rolls_back_on_cron_refresh_failure(self):
         backup = self.home / "control-center" / "config-backups" / "config.yaml"
-        with mock.patch.object(
-            bridge,
-            "atomic_lab_profile_update",
-            return_value={"backup": str(backup), "restart_required": True},
-        ), mock.patch.object(
-            bridge,
-            "refresh_existing_agency_cron",
-            side_effect=[RuntimeError("refresh failed"), {"status": "updated"}],
-        ), mock.patch.object(bridge, "restart_gateway_if_running") as restart, mock.patch.object(
-            bridge, "restore_internal_config_backup"
-        ) as restore, mock.patch.object(bridge, "gateway_is_running", return_value=True):
+        with (
+            mock.patch.object(
+                bridge,
+                "atomic_lab_profile_update",
+                return_value={"backup": str(backup), "restart_required": True},
+            ),
+            mock.patch.object(
+                bridge,
+                "refresh_existing_agency_cron",
+                side_effect=[RuntimeError("refresh failed"), {"status": "updated"}],
+            ),
+            mock.patch.object(bridge, "restart_gateway_if_running") as restart,
+            mock.patch.object(bridge, "restore_internal_config_backup") as restore,
+            mock.patch.object(bridge, "gateway_is_running", return_value=True),
+        ):
             with self.assertRaisesRegex(RuntimeError, "rolled back"):
                 bridge.apply_lab_profile_transaction({}, {})
         restore.assert_called_once_with(backup)
         restart.assert_called_once_with(True)
 
     def test_gateway_activation_restores_original_running_state(self):
-        with mock.patch.object(bridge, "gateway_is_running", return_value=False), mock.patch.object(
-            bridge, "hermes_command", return_value={"output": "started"}
-        ) as command:
+        with (
+            mock.patch.object(bridge, "gateway_is_running", return_value=False),
+            mock.patch.object(
+                bridge, "hermes_command", return_value={"output": "started"}
+            ) as command,
+        ):
             result = bridge.restart_gateway_if_running(True)
         command.assert_called_once_with("gateway", "start", timeout=90)
         self.assertEqual(result["status"], "restored_running")
@@ -259,9 +463,10 @@ class BridgeSafetyTests(unittest.TestCase):
         package.__path__ = []
         cron = ModuleType("agency.cron")
         cron.cron_action = lambda verb: f"ran {verb}"
-        with mock.patch.dict(
-            "sys.modules", {"agency": package, "agency.cron": cron}
-        ), mock.patch.object(bridge, "import_agency") as bootstrap:
+        with (
+            mock.patch.dict("sys.modules", {"agency": package, "agency.cron": cron}),
+            mock.patch.object(bridge, "import_agency") as bootstrap,
+        ):
             result = bridge.execute_mutation("agency_run_cron", {})
         bootstrap.assert_called_once_with()
         self.assertEqual(result["result"]["output"], "ran run")

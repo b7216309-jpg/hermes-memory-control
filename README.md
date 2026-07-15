@@ -50,8 +50,8 @@ creating a second runtime or delivery path.
 The real integration suite currently covers:
 
 - Hermes Agent `0.18.2`;
-- Consolidating Local Memory `3.3.0`;
-- Conscious Agency `0.4.0`;
+- Consolidating Local Memory `3.3.1`;
+- Conscious Agency `0.4.2`;
 - encrypted base and user-scoped databases;
 - Electron `43`.
 
@@ -336,6 +336,34 @@ wsl -d Ubuntu -- test -f ~/.hermes/config.yaml
 
 The current app discovers the default Linux user's `~/.hermes`. A custom Hermes home is not
 accepted through a free-text renderer path; add an explicit trusted profile in code instead.
+
+### Gateway stops when the last WSL terminal closes
+
+Some WSL installations shut down the Ubuntu VM when the final Windows `wsl.exe` client exits;
+systemd enablement and linger keep the service eligible to run but do not keep that VM alive. If
+`journalctl --user -u hermes-gateway.service` shows a clean `SIGTERM` at the same time, create one
+hidden per-user keepalive task from Windows PowerShell:
+
+```powershell
+$name = 'Hermes WSL Gateway Keepalive'
+$action = New-ScheduledTaskAction `
+  -Execute "$env:WINDIR\System32\wsl.exe" `
+  -Argument '-d Ubuntu --exec /bin/bash -lc "systemctl --user start hermes-gateway.service && exec /bin/sleep infinity"'
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) `
+  -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) `
+  -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+$principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" `
+  -LogonType Interactive -RunLevel Limited
+Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger `
+  -Settings $settings -Principal $principal -Force
+Start-ScheduledTask -TaskName $name
+```
+
+This keeps WSL and Hermes active only while that Windows user is logged in. It also keeps the WSL
+VM's memory allocated. Remove it with
+`Stop-ScheduledTask -TaskName $name; Unregister-ScheduledTask -TaskName $name -Confirm:$false` if
+your WSL build already stays alive or you no longer need background Telegram/cron service.
 
 ### SQLCipher key is missing
 

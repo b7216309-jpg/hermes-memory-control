@@ -1187,6 +1187,9 @@ AGENCY_DESCRIPTIONS = {
     "cron_delivery": "Local, origin, platform, or platform:chat_id delivery target",
     "cron_name": "Hermes cron job name",
     "manual_run_timeout_seconds": "Timeout for a manual cron run",
+    "cron_disable_thinking": (
+        "Send the Qwen/llama.cpp no-thinking hint only for the official Agency cron"
+    ),
     "educational_disable_honesty_contract": (
         "LAB: remove this plugin's sentience/emotion claim contract from injected context and cron"
     ),

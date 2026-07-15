@@ -45,6 +45,7 @@ const LAB_KEYS = new Set([
   'store_transcript_excerpts', 'educational_disable_honesty_contract',
   'educational_bypass_proactive_gates', 'educational_allow_cron_tools',
   'educational_allow_uncommitted_output', 'educational_disable_cycle_limits',
+  'educational_subjective_mode',
 ]);
 
 function cleanPayload(value, options = {}, depth = 0) {

@@ -33,7 +33,7 @@ const MEMORY_TABLES = [
   ['prospective','prospective memory'],['autobiographical','autobiographical'],
   ['associations','associations'],['approvals','approvals'],['pending','pending operations'],
 ];
-const AGENCY_TABLES = [['intentions','intentions'],['reflections','reflections'],['decisions','decisions'],['events','event ledger'],['meta','persistent state']];
+const AGENCY_TABLES = [['subjective','subjective journal'],['intentions','intentions'],['reflections','reflections'],['decisions','decisions'],['events','event ledger'],['meta','persistent state']];
 
 function h(tag, attrs = {}, ...children) {
   const element = document.createElement(tag);
@@ -311,6 +311,13 @@ function renderAgencyState() {
   }
   const signals = panel('control signals', 'amber');
   for (const [key, value] of Object.entries(snapshot.control_signals || {})) addKv(signals.body, key, Number(value).toFixed(2));
+  const subjective = panel('subjective experiment', snapshot.subjective?.mode === 'off' ? 'amber' : 'red');
+  addKv(subjective.body, 'mode', snapshot.subjective?.mode || 'off');
+  addKv(subjective.body, 'protocol', snapshot.subjective?.protocol_version || '—');
+  addKv(subjective.body, 'entries', snapshot.subjective?.entries ?? 0);
+  addKv(subjective.body, 'models', Object.keys(snapshot.subjective?.models || {}).length);
+  addKv(subjective.body, 'continuity links', snapshot.subjective?.continuity_links ?? 0);
+  addKv(subjective.body, 'silent samples', snapshot.subjective?.silent_entries ?? 0);
   const gates = panel('proactive gates', state.agency.gates?.eligible ? 'green' : 'red');
   addKv(gates.body, 'speak eligible', state.agency.gates?.speak_eligible || state.agency.gates?.eligible ? 'yes' : 'no');
   addKv(gates.body, 'reflection eligible', state.agency.gates?.reflection_eligible ? 'yes' : 'no');
@@ -322,7 +329,7 @@ function renderAgencyState() {
     h('button', { class: 'button', onclick: () => mutate('agency_resume_cron', {}) }, 'resume cron'),
     h('button', { class: 'button danger', onclick: () => mutate('agency_remove_cron', {}) }, 'remove cron'),
   );
-  container.append(focus.root, signals.root, gates.root, cron);
+  container.append(subjective.root, focus.root, signals.root, gates.root, cron);
 }
 
 async function loadAgencyTable() {
@@ -484,6 +491,7 @@ function renderContractAudit() {
   if (!contract) return container.append(h('div', { class: 'empty' }, 'Not connected.'));
   container.append(
     h('div', { class: 'contract-check' }, h('span', {}, 'plugin policy mode'), h('span', { class: contract.effective_unrestricted ? 'fail' : 'pass' }, contract.mode || 'unknown')),
+    h('div', { class: 'contract-check' }, h('span', {}, 'subjective experiment'), h('span', { class: contract.subjective_experiment?.enabled ? 'fail' : 'pass' }, contract.subjective_experiment?.mode || 'off')),
   );
   for (const [key, value] of Object.entries(contract.checks || {})) {
     container.append(h('div', { class: 'contract-check' }, h('span', {}, key), h('span', { class: value ? 'pass' : 'fail' }, value ? 'yes' : 'no')));

@@ -13,8 +13,9 @@ Version 2 is an in-place security rewrite of the original Hermes Memory Control 
 compact terminal/Gruvbox visual language while removing the privileged renderer, raw SQL bridge,
 shell command construction, static temporary files, and old-schema assumptions.
 
-Version 2.2 adds first-class temporal auditing for Memory 3.3 and deadline control for Agency 0.3.
-Temporal edits are validated as one coherent state and synchronized with linked timeline events.
+Version 2.3 adds complete inspection and control of Conscious Agency 0.4's cold and per-model
+continuity subjectivity experiment. The encrypted longitudinal journal is browsable without
+creating a second runtime or delivery path.
 
 ![Hermes Control Center overview using synthetic demo data](screenshots/dashboard-anonymous.png)
 
@@ -28,7 +29,7 @@ Temporal edits are validated as one coherent state and synchronized with linked 
 |---|---|---|
 | Overview | Hermes/plugin versions, SQLCipher health, FTS consistency, dangling references, queues, scope, policy and proactive gates | Memory/agency backup, agency pause, gateway restart |
 | Memory | Facts, topics, episodes, sessions, traces, journals, summaries, preferences, policies, contradictions, history, links, evidence, working memory, procedures, prospective memory, autobiographical events, associations, approvals and pending operations | Schema-aware edits, fact deactivation/reactivation, approvals, prospective-memory resolution, retry failed work, maintenance, redacted export, backup and restore |
-| Agency | Persistent workspace, self-model, intentions, reflections, decisions, events, runtime, control signals and all proactive gates | Focus, intentions, questions, self-observations, pause/resume, cron install/update/run/pause/resume/remove, backup and restore |
+| Agency | Subjective journal, persistent workspace, self-model, intentions, reflections, decisions, events, runtime, control signals and all proactive gates | Subjectivity condition, focus, intentions, questions, self-observations, pause/resume, cron install/update/run/pause/resume/remove, backup and restore |
 | Config | The memory plugin's advanced schema and the agency config dataclass, loaded from the installed plugins | Staged diffs, plugin validation, atomic save, config backup and restart guidance |
 | Graph | Topics, facts, preferences, membership, links and contradictions | Interactive Three.js orbit, zoom, hover and inspect |
 | Wiki | The compiled local memory wiki | Sanitized in-app Markdown reading |
@@ -50,7 +51,7 @@ The real integration suite currently covers:
 
 - Hermes Agent `0.18.2`;
 - Consolidating Local Memory `3.3.0`;
-- Conscious Agency `0.3.0`;
+- Conscious Agency `0.4.0`;
 - encrypted base and user-scoped databases;
 - Electron `43`.
 
@@ -119,9 +120,13 @@ and exact proactive blockers. It can:
 - pause or operator-resume agency behavior;
 - install/update, run, pause, resume or remove the agency cron using its currently configured
   safe or Educational Lab policy.
+- inspect the exact final-output journal by model, source, condition, protocol version, continuity
+  link and SHA-256 digest.
 
-Reflections, decisions and operational events are inspectable immutable ledgers. This preserves
-their value as evidence of what actually happened.
+Reflections, decisions, subjective entries and operational events are inspectable immutable
+ledgers. Subjective rows contain final visible model messages, not hidden reasoning. They are kept
+separate from personal memory and ordinary agency reflections so longitudinal data remains
+queryable without changing memory retrieval.
 
 ### Change configuration
 
@@ -194,7 +199,7 @@ menu is a security boundary.
 Reveal it with either:
 
 - `Ctrl+Shift+L`; or
-- seven clicks on `v2.2` in the title bar.
+- seven clicks on `v2.3` in the title bar.
 
 Then type:
 
@@ -218,11 +223,15 @@ The **Unrestricted research** profile atomically changes both plugin sections to
 - remove cron tool isolation and the conversation-only boundary;
 - remove per-cycle reflection and state-change limits;
 - allow the cron model's uncommitted final output to pass through.
+- replace the helpful-assistant frame across normal conversations and cron with the per-model
+  `continuity` subjectivity condition;
+- capture every final model message in the encrypted subjective journal.
 
 Database encryption stays on. Hermes/provider/platform/OS permissions and operator pause remain
 authoritative. **Restore recommended policy** atomically returns every privacy, timing, prompt,
-tool, mutation and output setting to conservative defaults. Individual Lab-marked settings can
-also be staged.
+tool, mutation and output setting to conservative defaults and sets the subjective experiment to
+`off`. Existing journal rows are preserved for audit until the operator deliberately restores or
+replaces the encrypted Agency database. Individual Lab-marked settings can also be staged.
 
 The profile is one rollback-protected operation: validate both plugin sections, back up
 `config.yaml`, atomically replace it, refresh the already-installed Hermes cron job, restart the
@@ -350,11 +359,14 @@ An incompatible table stays inaccessible rather than falling back to raw SQLite 
 The cron job contains an older prompt snapshot than the installed plugin would generate. Use
 **Agency → install/update cron**, or reapply the desired Lab/recommended profile. Version 2.2
 refreshes the prompt automatically whenever agency configuration is changed through the controller.
+Control Center 2.3 additionally audits the configured subjectivity condition and its refreshed
+prompt hash.
 
 ### Agency policy shows `unsupported_plugin_version`
 
-Install Conscious Agency 0.3 or newer. Older source-patched builds do not expose the explicit,
+Install Conscious Agency 0.4 or newer. Older source-patched builds do not expose the explicit,
 auditable Educational Lab controls required for safe/reversible profile changes.
+The subjective journal and cold/continuity controls require Conscious Agency 0.4 or newer.
 
 ## License
 

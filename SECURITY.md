@@ -44,7 +44,7 @@ The Lab is hidden to reduce accidental discovery, but hiding is not authorizatio
 process independently enforces its unlock phrase and expiry. Lab operations still use backups,
 confirmation phrases, validation and audit.
 
-The controller never patches plugin source. Conscious Agency 0.3 exposes strict default-off Lab
+The controller never patches plugin source. Conscious Agency 0.4 exposes strict default-off Lab
 settings for claim-contract, gate, tool-isolation, mutation-limit and output-filter research. The
 controller compares those settings with the prompt actually stored in Hermes cron, then refreshes
 the job and restarts a running gateway with rollback protection. These overrides affect only the

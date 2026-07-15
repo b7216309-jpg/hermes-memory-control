@@ -83,6 +83,14 @@ class BridgeSafetyTests(unittest.TestCase):
         self.assertEqual(value["database_key_env"], "<redacted>")
         self.assertEqual(value["safe"], 4)
 
+    def test_subjective_journal_is_read_only_and_lab_scoped(self):
+        self.assertEqual(bridge.AGENCY_TABLES["subjective"], "subjective_entries")
+        self.assertIn("educational_subjective_mode", bridge.LAB_AGENCY_KEYS)
+        self.assertEqual(
+            bridge.AGENCY_CHOICES["educational_subjective_mode"],
+            {"off", "cold", "continuity"},
+        )
+
     def test_audit_safely_hashes_memory_text_and_nested_secrets(self):
         safe = bridge.audit_safe(
             {

@@ -83,6 +83,7 @@ AGENCY_TABLES = {
     "intentions": "intentions",
     "reflections": "reflections",
     "decisions": "decisions",
+    "subjective": "subjective_entries",
     "meta": "meta",
 }
 MEMORY_EDIT_FIELDS = {
@@ -229,6 +230,7 @@ MEMORY_CHOICES = {
 }
 AGENCY_CHOICES = {
     "cron_delivery": None,
+    "educational_subjective_mode": {"off", "cold", "continuity"},
 }
 LAB_MEMORY_KEYS = {
     "allow_credential_memory",
@@ -246,6 +248,7 @@ LAB_AGENCY_KEYS = {
     "educational_allow_cron_tools",
     "educational_allow_uncommitted_output",
     "educational_disable_cycle_limits",
+    "educational_subjective_mode",
 }
 EDUCATIONAL_AGENCY_KEYS = {
     "educational_disable_honesty_contract",
@@ -965,6 +968,11 @@ def agency_list(payload: dict[str, Any]) -> dict[str, Any]:
                     "kind",
                     "status",
                     "key",
+                    "model_id",
+                    "source",
+                    "condition",
+                    "prompt_version",
+                    "output_text",
                 }
             ]
             if candidates:
@@ -1027,12 +1035,14 @@ def contract_audit() -> dict[str, Any]:
         key in config_source for key in EDUCATIONAL_AGENCY_KEYS
     )
     controls = {key: False for key in sorted(EDUCATIONAL_AGENCY_KEYS)}
+    subjective_mode = "off"
     expected_prompt = ""
     job_id = ""
     error = ""
     try:
         _, config, _, store = agency_objects()
         controls = {key: bool(getattr(config, key, False)) for key in sorted(controls)}
+        subjective_mode = str(getattr(config, "educational_subjective_mode", "off"))
         job_id = str(store.get_meta("cron_job_id", "") or "")
         if source_support:
             from agency.cron import cron_prompt
@@ -1108,6 +1118,10 @@ def contract_audit() -> dict[str, Any]:
             "scope": "upstream_hermes_not_plugin",
         },
         "effective_unrestricted": mode == "educational_unrestricted",
+        "subjective_experiment": {
+            "mode": subjective_mode,
+            "enabled": subjective_mode != "off",
+        },
         "intact": mode == "recommended",
         "checks": checks,
         "modified_install_detected": not source_support
@@ -1188,6 +1202,10 @@ AGENCY_DESCRIPTIONS = {
     "educational_disable_cycle_limits": (
         "LAB: remove this plugin's per-cycle reflection and state-mutation limits"
     ),
+    "educational_subjective_mode": (
+        "LAB: replace the helpful-assistant frame with a cold or per-model continuity "
+        "subjectivity experiment in conversations and cron"
+    ),
 }
 
 
@@ -1219,6 +1237,9 @@ def agency_schema() -> list[dict[str, Any]]:
                 "type": kind,
                 "lab": field.name in LAB_AGENCY_KEYS,
                 "read_only": field.name in {"database_encryption", "database_key_env"},
+                "choices": sorted(AGENCY_CHOICES[field.name])
+                if field.name in AGENCY_CHOICES and AGENCY_CHOICES[field.name]
+                else None,
             }
         )
     return result
@@ -2148,6 +2169,7 @@ def execute_mutation(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
                 "educational_allow_cron_tools": True,
                 "educational_allow_uncommitted_output": True,
                 "educational_disable_cycle_limits": True,
+                "educational_subjective_mode": "continuity",
             }
         elif profile == "recommended":
             memory_changes = {
@@ -2172,6 +2194,7 @@ def execute_mutation(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
                 "educational_allow_cron_tools": False,
                 "educational_allow_uncommitted_output": False,
                 "educational_disable_cycle_limits": False,
+                "educational_subjective_mode": "off",
             }
         else:
             raise ValueError("Unknown Educational Lab profile")

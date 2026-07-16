@@ -26,6 +26,7 @@ let activeProfile = null;
 let labUnlockedUntil = 0;
 const plans = new Map();
 const PLAN_TTL_MS = 2 * 60 * 1000;
+const MAX_PENDING_PLANS = 100;
 
 function trusted(event) {
   return Boolean(win && event.sender === win.webContents && event.senderFrame === win.webContents.mainFrame);
@@ -93,6 +94,9 @@ function prunePlans() {
   for (const [id, plan] of plans) {
     if (now - plan.createdAt > PLAN_TTL_MS) plans.delete(id);
   }
+  while (plans.size > MAX_PENDING_PLANS) {
+    plans.delete(plans.keys().next().value);
+  }
 }
 
 function registerIpc() {
@@ -139,7 +143,16 @@ function registerIpc() {
     prunePlans();
     const payload = cleanPayload(rawPayload || {});
     const plan = buildPlan(action, payload);
-    plans.set(plan.id, { ...plan, createdAt: Date.now() });
+    const profile = requireConnected();
+    const preflight = await runBridge(profile, 'mutation_preflight', { action, payload });
+    prunePlans();
+    if (plans.size >= MAX_PENDING_PLANS) plans.delete(plans.keys().next().value);
+    plans.set(plan.id, {
+      ...plan,
+      createdAt: Date.now(),
+      preflightToken: preflight.token,
+      profile: `${profile.distro}\0${profile.home}`,
+    });
     return {
       id: plan.id,
       title: plan.title,
@@ -161,7 +174,16 @@ function registerIpc() {
     if (isLabAction(plan.action, plan.payload) && Date.now() >= labUnlockedUntil) {
       throw new Error('Educational Lab is locked or its 15-minute session expired');
     }
-    return runBridge(requireConnected(), plan.action, plan.payload, { mutation: true });
+    const profile = requireConnected();
+    if (`${profile.distro}\0${profile.home}` !== plan.profile) {
+      throw new Error('The connected Hermes profile changed; preview the action again');
+    }
+    return runBridge(
+      profile,
+      plan.action,
+      { ...plan.payload, _preflight_token: plan.preflightToken },
+      { mutation: true },
+    );
   });
 
   ipcMain.handle('control:lab-unlock', async (event, phrase) => {

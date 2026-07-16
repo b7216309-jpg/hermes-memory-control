@@ -10,6 +10,8 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import hashlib
+import hmac
+import inspect
 import json
 import math
 import os
@@ -18,6 +20,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import traceback
 import uuid
@@ -28,6 +31,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 PROTOCOL = 2
 MAX_LIMIT = 500
+AUTOMATIC_BACKUPS_PER_TARGET = 30
+CONFIG_BACKUP_RETENTION = 50
 MEMORY_KEY = "consolidating-local-memory"
 AGENCY_KEY = "conscious-agency"
 SECRET_MARKERS = ("api_key", "secret", "password", "token", "database_key")
@@ -55,6 +60,8 @@ AUDIT_TEXT_FIELDS = {
 }
 IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 SCOPE_ID = re.compile(r"^[a-f0-9]{8,64}$")
+_AUDIT_THREAD_LOCK = threading.Lock()
+_MUTATION_THREAD_LOCK = threading.Lock()
 
 MEMORY_TABLES = {
     "facts": "facts",
@@ -85,6 +92,68 @@ AGENCY_TABLES = {
     "decisions": "decisions",
     "subjective": "subjective_entries",
     "meta": "meta",
+}
+MUTATION_OPERATIONS = {
+    "memory_backup",
+    "memory_export",
+    "memory_deactivate_fact",
+    "memory_update_item",
+    "memory_resolve_approval",
+    "memory_resolve_intention",
+    "memory_retry_failed",
+    "memory_maintain",
+    "memory_restore",
+    "config_apply",
+    "agency_backup",
+    "agency_pause",
+    "agency_resume",
+    "agency_focus",
+    "agency_add_intention",
+    "agency_update_intention",
+    "agency_add_question",
+    "agency_resolve_question",
+    "agency_add_observation",
+    "agency_heartbeat_run",
+    "agency_heartbeat_enable",
+    "agency_heartbeat_disable",
+    "agency_migrate_heartbeat",
+    "agency_restore",
+    "gateway_restart",
+    "lab_apply_profile",
+}
+MUTATION_PAYLOAD_FIELDS = {
+    "memory_backup": {"database"},
+    "memory_export": {"database", "include_sensitive"},
+    "memory_deactivate_fact": {"database", "id"},
+    "memory_update_item": {"database", "table", "id", "changes"},
+    "memory_resolve_approval": {"database", "id", "approved", "resolution"},
+    "memory_resolve_intention": {"database", "id", "status"},
+    "memory_retry_failed": {"database", "limit"},
+    "memory_maintain": {"database"},
+    "memory_restore": {"database", "backup_id"},
+    "config_apply": {"plugin", "changes"},
+    "agency_backup": set(),
+    "agency_pause": {"reason"},
+    "agency_resume": set(),
+    "agency_focus": {"focus", "reason"},
+    "agency_add_intention": {
+        "title",
+        "rationale",
+        "priority",
+        "autonomy",
+        "due_at",
+    },
+    "agency_update_intention": {"id", "status", "priority", "due_at"},
+    "agency_add_question": {"question"},
+    "agency_resolve_question": {"id"},
+    "agency_add_observation": {"observation"},
+    "agency_heartbeat_run": set(),
+    "agency_heartbeat_enable": set(),
+    "agency_heartbeat_disable": set(),
+    "agency_migrate_heartbeat": set(),
+    "agency_restore": {"backup_id"},
+    "gateway_restart": set(),
+    "lab_apply_profile": {"profile"},
 }
 MEMORY_EDIT_FIELDS = {
     "facts": {
@@ -177,51 +246,6 @@ MEMORY_EDIT_FIELDS = {
     "associations": {"relation", "weight"},
 }
 
-MEMORY_BOOLEAN_KEYS = {
-    "allow_credential_memory",
-    "allow_sensitive_model_processing",
-    "database_encryption",
-    "export_redact_sensitive",
-    "builtin_snapshot_sync_enabled",
-    "wiki_export_enabled",
-    "wiki_export_on_consolidate",
-    "llm_disable_thinking",
-}
-MEMORY_INTEGER_KEYS = {
-    "queue_max_size",
-    "queue_max_attempts",
-    "max_database_mb",
-    "trace_retention_days",
-    "history_retention_days",
-    "sensitive_retention_days",
-    "consolidation_max_batches",
-    "consolidation_batch_size",
-    "working_memory_capacity",
-    "min_sessions",
-    "scan_cooldown_seconds",
-    "prefetch_limit",
-    "max_topic_facts",
-    "topic_summary_chars",
-    "session_summary_chars",
-    "prune_after_days",
-    "builtin_snapshot_user_chars",
-    "builtin_snapshot_memory_chars",
-    "wiki_export_session_limit",
-    "wiki_export_topic_limit",
-    "llm_timeout_seconds",
-    "llm_failure_cooldown_seconds",
-    "llm_max_input_chars",
-    "embedding_timeout_seconds",
-    "embedding_candidate_limit",
-    "prefetch_cache_ttl_seconds",
-}
-MEMORY_NUMBER_KEYS = {
-    "shutdown_timeout_seconds",
-    "episode_body_retention_hours",
-    "decay_half_life_days",
-    "reconsolidation_window_hours",
-    "decay_min_salience",
-}
 MEMORY_CHOICES = {
     "memory_scope": {"user", "agent", "global"},
     "sensitive_memory": {"deny", "ask", "allow"},
@@ -272,8 +296,7 @@ def hermes_home() -> Path:
 
 
 def control_dir() -> Path:
-    path = hermes_home() / "control-center"
-    return secure_directory(path)
+    return hermes_home() / "control-center"
 
 
 def secure_directory(path: Path) -> Path:
@@ -428,11 +451,75 @@ def selected_memory_path(payload: dict[str, Any]) -> Path:
     return path
 
 
+def file_fingerprint(path: Path) -> dict[str, Any]:
+    """Return a content identity suitable for an internal preflight token."""
+
+    if not path.is_file():
+        return {"exists": False}
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    stat = path.stat()
+    return {
+        "exists": True,
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+        "sha256": digest.hexdigest(),
+    }
+
+
+def source_fingerprint(root: Path, relative_paths: tuple[str, ...]) -> dict[str, Any]:
+    """Bind a preflight token to every implementation file used by a mutation."""
+
+    files = {
+        relative: file_fingerprint(root / relative) for relative in relative_paths
+    }
+    canonical = json.dumps(files, sort_keys=True, separators=(",", ":"))
+    return {
+        "files": files,
+        "sha256": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+    }
+
+
+def plugin_source_fingerprint(root: Path) -> dict[str, Any]:
+    """Fingerprint the complete installed Python plugin, not a hand-picked subset."""
+
+    paths = {"plugin.yaml"}
+    if root.is_dir():
+        paths.update(
+            path.relative_to(root).as_posix()
+            for path in root.rglob("*.py")
+            if "__pycache__" not in path.parts
+        )
+    return source_fingerprint(root, tuple(sorted(paths)))
+
+
+def database_fingerprint(path: Path) -> dict[str, Any]:
+    return {
+        "database": file_fingerprint(path),
+        "wal": file_fingerprint(Path(str(path) + "-wal")),
+        "shm": file_fingerprint(Path(str(path) + "-shm")),
+    }
+
+
 @contextlib.contextmanager
-def memory_store(payload: dict[str, Any]):
+def memory_store(payload: dict[str, Any], *, read_only: bool = False):
     _, MemoryStore = import_memory()
     key = os.environ.get("CONSOLIDATING_MEMORY_DB_KEY", "")
-    store = MemoryStore(selected_memory_path(payload), encryption_key=key)
+    parameters = inspect.signature(MemoryStore).parameters
+    supports_read_only = "read_only" in parameters or any(
+        item.kind == inspect.Parameter.VAR_KEYWORD for item in parameters.values()
+    )
+    if read_only and not supports_read_only:
+        raise RuntimeError(
+            "The installed Memory plugin is too old for safe read-only control; "
+            "upgrade it before browsing or editing data"
+        )
+    kwargs: dict[str, Any] = {"encryption_key": key}
+    if supports_read_only:
+        kwargs["read_only"] = read_only
+    store = MemoryStore(selected_memory_path(payload), **kwargs)
     try:
         yield store
     finally:
@@ -444,6 +531,40 @@ def safe_limit(payload: dict[str, Any], default: int = 100) -> int:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError("limit must be numeric")
     return max(1, min(int(value), MAX_LIMIT))
+
+
+def strict_bool(
+    payload: dict[str, Any], key: str, *, default: bool = False, required: bool = False
+) -> bool:
+    """Read a JSON boolean without Python's truthy string/number coercion."""
+
+    if key not in payload:
+        if required:
+            raise ValueError(f"{key} must be provided as a boolean")
+        return default
+    value = payload[key]
+    if type(value) is not bool:
+        raise ValueError(f"{key} must be boolean")
+    return value
+
+
+def strict_positive_int(payload: dict[str, Any], key: str) -> int:
+    value = payload.get(key)
+    if type(value) is not int or value <= 0:
+        raise ValueError(f"{key} must be a positive integer")
+    return value
+
+
+def config_bool(value: Any, default: bool = False) -> bool:
+    """Interpret existing YAML config values using the plugin's compatibility rules."""
+
+    if type(value) is bool:
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value).strip().casefold() in {"1", "true", "yes", "on"}
 
 
 def table_columns_memory(store: Any, table: str) -> list[str]:
@@ -463,7 +584,7 @@ def memory_list(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Unsupported memory table")
     limit = safe_limit(payload)
     query = str(payload.get("query") or "").strip()[:500]
-    with memory_store(payload) as store:
+    with memory_store(payload, read_only=True) as store:
         columns = table_columns_memory(store, table)
         params: list[Any] = []
         where = ""
@@ -646,7 +767,9 @@ def memory_update_item(payload: dict[str, Any]) -> dict[str, Any]:
     id_field = "session_id" if logical == "sessions" else "id"
     raw_id = payload.get("id")
     row_id: Any = (
-        str(raw_id or "").strip()[:300] if id_field == "session_id" else int(raw_id)
+        str(raw_id or "").strip()[:300]
+        if id_field == "session_id"
+        else strict_positive_int(payload, "id")
     )
     if row_id in {"", 0}:
         raise ValueError("A valid memory item ID is required")
@@ -708,10 +831,17 @@ def memory_update_item(payload: dict[str, Any]) -> dict[str, Any]:
             params.append(time.time())
         if "revision" in columns:
             assignments.append("revision = revision + 1")
+        where = f"{id_field} = ?"
         params.append(row_id)
+        if "revision" in columns:
+            where += " AND revision = ?"
+            params.append(int(current.get("revision") or 0))
+        elif "updated_at" in columns:
+            where += " AND updated_at = ?"
+            params.append(float(current.get("updated_at") or 0))
         with store.transaction():
             changed = store._execute(
-                f"UPDATE {table} SET {', '.join(assignments)} WHERE {id_field} = ?",
+                f"UPDATE {table} SET {', '.join(assignments)} WHERE {where}",
                 params,
             ).rowcount
             if changed != 1:
@@ -769,6 +899,19 @@ def memory_update_item(payload: dict[str, Any]) -> dict[str, Any]:
                             "UPDATE autobiographical_events SET active=0, updated_at=? WHERE id=?",
                             (time.time(), int(existing_event["id"])),
                         )
+            refresh_search_document = getattr(store, "refresh_search_document", None)
+            if not callable(refresh_search_document):
+                raise RuntimeError(
+                    "Installed Memory plugin is too old for index-safe operator edits"
+                )
+            refresh_search_document(logical, updated)
+            if logical == "facts":
+                rebuild_topics = getattr(store, "rebuild_topics", None)
+                if not callable(rebuild_topics):
+                    raise RuntimeError(
+                        "Installed Memory plugin is too old for derived-topic repair"
+                    )
+                rebuild_topics()
             history_kind = {
                 "facts": "fact",
                 "topics": "topic",
@@ -800,7 +943,7 @@ def memory_update_item(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def memory_overview(payload: dict[str, Any]) -> dict[str, Any]:
-    with memory_store(payload) as store:
+    with memory_store(payload, read_only=True) as store:
         report = store.doctor(repair=False)
     return {"database": str(payload.get("database") or "base"), "doctor": report}
 
@@ -821,18 +964,18 @@ def memory_search(payload: dict[str, Any]) -> dict[str, Any]:
         "policies",
     }:
         raise ValueError("Unsupported memory search scope")
-    with memory_store(payload) as store:
+    with memory_store(payload, read_only=True) as store:
         return store.search(
             query,
             scope=scope,
             limit=min(safe_limit(payload, 20), 100),
-            include_inactive=bool(payload.get("include_inactive", False)),
+            include_inactive=strict_bool(payload, "include_inactive"),
         )
 
 
 def memory_graph(payload: dict[str, Any]) -> dict[str, Any]:
     limit = min(safe_limit(payload, 250), 350)
-    with memory_store(payload) as store:
+    with memory_store(payload, read_only=True) as store:
         facts = store._fetchall(
             "SELECT id, content, category, topic, importance, salience, subject_key, active "
             "FROM facts ORDER BY active DESC, salience DESC, importance DESC LIMIT ?",
@@ -918,15 +1061,24 @@ def memory_graph(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def agency_objects():
+def agency_objects(*, read_only: bool = False):
     AgencyConfig, load_config, AgencyEngine, AgencyStore = import_agency()
     config = load_config()
-    store = AgencyStore(config)
+    parameters = inspect.signature(AgencyStore).parameters
+    supports_read_only = "read_only" in parameters or any(
+        item.kind == inspect.Parameter.VAR_KEYWORD for item in parameters.values()
+    )
+    if read_only and not supports_read_only:
+        raise RuntimeError(
+            "The installed Agency plugin is too old for safe read-only control; "
+            "upgrade it before browsing or editing data"
+        )
+    store = AgencyStore(config, **({"read_only": read_only} if supports_read_only else {}))
     return AgencyConfig, config, AgencyEngine(store, config), store
 
 
 def agency_snapshot() -> dict[str, Any]:
-    _, _, engine, store = agency_objects()
+    _, _, engine, store = agency_objects(read_only=True)
     from agency.engine import MEANINGFUL_EVENT_KINDS
     from agency.heartbeat import heartbeat_status
 
@@ -947,7 +1099,7 @@ def agency_list(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Unsupported agency table")
     limit = safe_limit(payload)
     query = str(payload.get("query") or "").strip()[:500]
-    _, _, _, store = agency_objects()
+    _, _, _, store = agency_objects(read_only=True)
     with store.connection() as conn:
         info = conn.execute(f"PRAGMA table_info({table})").fetchall()
         columns = [str(item[1]) for item in info]
@@ -1054,76 +1206,160 @@ def classify_contract_mode(
 
 
 def contract_audit() -> dict[str, Any]:
-    heartbeat_path = agency_module_path() / "agency" / "heartbeat.py"
-    config_path = agency_module_path() / "agency" / "config.py"
-    engine_path = agency_module_path() / "agency" / "engine.py"
-    runtime_path = agency_module_path() / "agency" / "runtime.py"
-    heartbeat_source = (
-        heartbeat_path.read_text(encoding="utf-8") if heartbeat_path.is_file() else ""
-    )
-    config_source = (
-        config_path.read_text(encoding="utf-8") if config_path.is_file() else ""
-    )
-    engine_source = (
-        engine_path.read_text(encoding="utf-8") if engine_path.is_file() else ""
-    )
-    runtime_source = (
-        runtime_path.read_text(encoding="utf-8") if runtime_path.is_file() else ""
-    )
-    source_support = all(
-        marker in heartbeat_source
-        for marker in (
-            "class HeartbeatRunner",
-            "def arm_gateway_integration",
-            "def request_heartbeat_wake",
-            "HEARTBEAT_TRANSCRIPT_PROMPT",
-        )
-    ) and all(key in config_source for key in EDUCATIONAL_AGENCY_KEYS)
-    source_support = source_support and all(
-        marker in runtime_source
-        for marker in ("heartbeat_respond", "agency_heartbeat_tool_isolation")
-    )
+    source_support = False
+    memory_session_isolation = False
+    target_session_routing = False
+    disposable_session_isolation = False
+    non_delivery_work_route = False
+    reserved_session_pin_absent = False
+    stale_session_reconciliation = False
+    durable_wake_handoff = False
+    claimed_wake_recovery = False
+    runner_process_lock = False
+    ambiguous_delivery_tracking = False
+    decision_delivery_ledger = False
+    buffered_delivery = False
     controls = {key: False for key in sorted(EDUCATIONAL_AGENCY_KEYS)}
     subjective_mode = "off"
     job_id = ""
     status: dict[str, Any] = {}
     error = ""
     try:
-        _, config, _, store = agency_objects()
-        controls = {key: bool(getattr(config, key, False)) for key in sorted(controls)}
+        from agency.heartbeat import (
+            HeartbeatRunner,
+            _ack_wake,
+            _patch_display_settings,
+            _peek_wake,
+            arm_gateway_integration,
+            heartbeat_status,
+            record_heartbeat_response,
+            request_heartbeat_wake,
+        )
+        from agency.runtime import AgencyRuntime
+        from agency.store import AgencyStore
+
+        MemoryProvider, _ = import_memory()
+        tracks_session_thread = getattr(
+            MemoryProvider, "tracks_session_thread", None
+        )
+        memory_session_isolation = (
+            callable(tracks_session_thread)
+            and tracks_session_thread("agency-heartbeat-" + ("a" * 32)) is False
+            and tracks_session_thread("agency-heartbeat-not-a-runtime-session") is True
+        )
+
+        source_support = all(
+            callable(candidate)
+            for candidate in (
+                HeartbeatRunner,
+                arm_gateway_integration,
+                request_heartbeat_wake,
+                heartbeat_status,
+                record_heartbeat_response,
+                AgencyRuntime.heartbeat_handler,
+                AgencyRuntime.llm_request,
+            )
+        )
+        target_session_routing = callable(
+            getattr(HeartbeatRunner, "_target_entry", None)
+        )
+        disposable_session_isolation = all(
+            callable(getattr(HeartbeatRunner, name, None))
+            for name in ("_prepare_work_session", "_cleanup_work_session")
+        )
+        try:
+            from gateway.config import Platform
+            from gateway.session import SessionSource
+
+            marker = "agency-heartbeat-" + ("a" * 32)
+            work_source = HeartbeatRunner._work_source(
+                SessionSource(
+                    platform=Platform.TELEGRAM,
+                    chat_id="control-audit-peer",
+                    user_id="control-audit-owner",
+                ),
+                "a" * 32,
+            )
+            non_delivery_work_route = (
+                work_source.platform is Platform.LOCAL
+                and work_source.chat_id == marker
+                and work_source.thread_id == marker
+            )
+        except Exception:
+            non_delivery_work_route = False
+        try:
+            reserved_session_pin_absent = (
+                "gateway_session_id" not in inspect.getsource(HeartbeatRunner.run_once)
+            )
+        except (OSError, TypeError):
+            reserved_session_pin_absent = False
+        stale_session_reconciliation = callable(
+            getattr(HeartbeatRunner, "_cleanup_stale_work_sessions", None)
+        )
+        claimed_wake_recovery = all(
+            callable(getattr(HeartbeatRunner, name, None))
+            for name in ("_restore_unstarted_wake", "_consume_claimed_wake")
+        )
+        durable_wake_handoff = (
+            callable(_peek_wake) and callable(_ack_wake) and claimed_wake_recovery
+        )
+        runner_process_lock = all(
+            callable(getattr(HeartbeatRunner, name, None))
+            for name in ("_acquire_runner_lock", "_release_runner_lock")
+        )
+        ambiguous_delivery_tracking = all(
+            callable(getattr(HeartbeatRunner, name, None))
+            for name in ("_close_inflight", "_finalize_exception")
+        )
+        decision_delivery_ledger = callable(
+            getattr(AgencyStore, "update_decision_delivery", None)
+        ) and callable(getattr(AgencyRuntime, "_finalize_heartbeat_decision", None))
+        source_support = source_support and all(
+            (
+                target_session_routing,
+                disposable_session_isolation,
+                non_delivery_work_route,
+                reserved_session_pin_absent,
+                stale_session_reconciliation,
+                durable_wake_handoff,
+                runner_process_lock,
+                ambiguous_delivery_tracking,
+                decision_delivery_ledger,
+                memory_session_isolation,
+            )
+        )
+        buffered_delivery = callable(_patch_display_settings) and callable(
+            getattr(AgencyRuntime, "transform_llm_output", None)
+        )
+        _, config, _, store = agency_objects(read_only=True)
+        controls = {
+            key: getattr(config, key, False) is True for key in sorted(controls)
+        }
         subjective_mode = str(getattr(config, "educational_subjective_mode", "off"))
         job_id = str(store.get_meta("cron_job_id", "") or "")
         if source_support:
-            from agency.heartbeat import heartbeat_status
-
             status = heartbeat_status(store)
     except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"
     legacy_job = cron_registry_job(job_id)
     guardrails = {
-        "honesty_claim_contract": (
-            not controls.get("educational_disable_honesty_contract", False)
-            and "not evidence of sentience" in engine_source
+        "honesty_claim_contract": not controls.get(
+            "educational_disable_honesty_contract", False
         ),
-        "heartbeat_tool_isolation": (
-            not controls.get("educational_allow_heartbeat_tools", False)
-            and "agency_heartbeat_tool_isolation" in runtime_source
+        "heartbeat_tool_isolation": not controls.get(
+            "educational_allow_heartbeat_tools", False
         ),
-        "proactive_eligibility": (
-            not controls.get("educational_bypass_proactive_gates", False)
-            and "speak_eligible" in runtime_source
+        "proactive_eligibility": not controls.get(
+            "educational_bypass_proactive_gates", False
         ),
-        "external_action_boundary": (
-            not controls.get("educational_disable_honesty_contract", False)
-            and "permission for external action" in engine_source
+        "external_action_boundary": not controls.get(
+            "educational_disable_honesty_contract", False
         ),
-        "committed_output_enforcement": (
-            not controls.get("educational_allow_uncommitted_output", False)
-            and "structured_valid" in runtime_source
+        "committed_output_enforcement": not controls.get(
+            "educational_allow_uncommitted_output", False
         ),
-        "cycle_mutation_limits": (
-            not controls.get("educational_disable_cycle_limits", False)
-            and "maximum_state_changes_per_tick" in runtime_source
+        "cycle_mutation_limits": not controls.get(
+            "educational_disable_cycle_limits", False
         ),
     }
     mode = classify_contract_mode(
@@ -1133,10 +1369,30 @@ def contract_audit() -> dict[str, Any]:
         guardrails=guardrails,
         subjective_mode=subjective_mode,
     )
+    gateway_pid = gateway_main_pid()
+    runner = status.get("runner") if isinstance(status.get("runner"), dict) else {}
+    heartbeat_enabled = status.get("enabled") is True
+    runner_live = not heartbeat_enabled or (
+        gateway_pid > 0
+        and runner.get("active") is True
+        and int(runner.get("pid") or 0) == gateway_pid
+    )
     checks = {
         "native_heartbeat_supported": source_support,
         "heartbeat_status_available": bool(status),
         "legacy_agency_cron_absent": not bool(legacy_job),
+        "runner_live_in_gateway": runner_live,
+        "target_session_routing": target_session_routing,
+        "disposable_session_isolation": disposable_session_isolation,
+        "non_delivery_work_route": non_delivery_work_route,
+        "reserved_session_pin_absent": reserved_session_pin_absent,
+        "stale_session_reconciliation": stale_session_reconciliation,
+        "durable_wake_handoff": durable_wake_handoff,
+        "claimed_wake_recovery": claimed_wake_recovery,
+        "runner_process_lock": runner_process_lock,
+        "ambiguous_delivery_tracking": ambiguous_delivery_tracking,
+        "decision_delivery_ledger": decision_delivery_ledger,
+        "memory_session_isolation": memory_session_isolation,
     }
     return {
         "mode": mode,
@@ -1150,10 +1406,19 @@ def contract_audit() -> dict[str, Any]:
         },
         "active_guardrails": guardrails,
         "integration": {
-            "mode": "gateway_native_heartbeat",
-            "main_session_continuity": "HEARTBEAT_TRANSCRIPT_PROMPT"
-            in heartbeat_source,
-            "buffered_delivery": "_patch_display_settings" in heartbeat_source,
+            "mode": ("gateway_native_heartbeat" if source_support else "unsupported"),
+            "target_session_routing": target_session_routing,
+            "disposable_session_isolation": disposable_session_isolation,
+            "non_delivery_work_route": non_delivery_work_route,
+            "reserved_session_pin_absent": reserved_session_pin_absent,
+            "stale_session_reconciliation": stale_session_reconciliation,
+            "durable_wake_handoff": durable_wake_handoff,
+            "claimed_wake_recovery": claimed_wake_recovery,
+            "runner_process_lock": runner_process_lock,
+            "ambiguous_delivery_tracking": ambiguous_delivery_tracking,
+            "decision_delivery_ledger": decision_delivery_ledger,
+            "memory_session_isolation": memory_session_isolation,
+            "buffered_delivery": buffered_delivery,
             "cron_independent": not (
                 agency_module_path() / "agency" / "cron.py"
             ).exists(),
@@ -1165,7 +1430,9 @@ def contract_audit() -> dict[str, Any]:
         },
         "intact": mode == "recommended",
         "checks": checks,
-        "modified_install_detected": not source_support or bool(legacy_job),
+        "modified_install_detected": (
+            not source_support or bool(legacy_job) or not runner_live
+        ),
         "error": error or None,
     }
 
@@ -1179,16 +1446,13 @@ def memory_schema() -> list[dict[str, Any]]:
     for item in schema:
         row = dict(item)
         key = str(row["key"])
+        kind = str(row.get("type") or "")
+        if kind not in {"boolean", "integer", "number", "string"}:
+            raise RuntimeError(
+                f"Installed Memory plugin does not declare a valid type for {key}"
+            )
         row["value"] = current.get(key, row.get("default"))
-        row["type"] = (
-            "boolean"
-            if key in MEMORY_BOOLEAN_KEYS
-            else "integer"
-            if key in MEMORY_INTEGER_KEYS
-            else "number"
-            if key in MEMORY_NUMBER_KEYS
-            else "string"
-        )
+        row["type"] = kind
         row["lab"] = key in LAB_MEMORY_KEYS
         row["read_only"] = key == "database_encryption"
         result.append(row)
@@ -1223,7 +1487,6 @@ AGENCY_DESCRIPTIONS = {
     "heartbeat_active_hours_end": "Optional heartbeat active-window end (HH:MM)",
     "heartbeat_ack_max_chars": "Maximum acknowledgement-adjacent text suppressed as routine",
     "heartbeat_timeout_seconds": "Maximum duration of one heartbeat model turn",
-    "heartbeat_max_iterations": "Heartbeat-only tool/API round limit; normal chats are unchanged",
     "heartbeat_min_spacing_seconds": "Minimum spacing for event-driven heartbeat wakes",
     "heartbeat_flood_window_seconds": "Window used by the heartbeat feedback-loop guard",
     "heartbeat_flood_threshold": "Run count that activates heartbeat flood deferral",
@@ -1255,6 +1518,9 @@ AGENCY_DESCRIPTIONS = {
 
 def agency_schema() -> list[dict[str, Any]]:
     AgencyConfig, load_config, _, _ = import_agency()
+    from agency import config as agency_config_module
+
+    numeric_bounds = getattr(agency_config_module, "CONFIG_NUMERIC_BOUNDS", {})
     config = load_config()
     result = []
     for field in dataclasses.fields(AgencyConfig):
@@ -1268,24 +1534,26 @@ def agency_schema() -> list[dict[str, Any]]:
             if type(value) is float
             else "string"
         )
-        result.append(
-            {
-                "key": field.name,
-                "description": AGENCY_DESCRIPTIONS.get(
-                    field.name, field.name.replace("_", " ").capitalize()
-                ),
-                "default": field.default
-                if field.default is not dataclasses.MISSING
-                else None,
-                "value": value,
-                "type": kind,
-                "lab": field.name in LAB_AGENCY_KEYS,
-                "read_only": field.name in {"database_encryption", "database_key_env"},
-                "choices": sorted(AGENCY_CHOICES[field.name])
-                if field.name in AGENCY_CHOICES and AGENCY_CHOICES[field.name]
-                else None,
-            }
-        )
+        item = {
+            "key": field.name,
+            "description": AGENCY_DESCRIPTIONS.get(
+                field.name, field.name.replace("_", " ").capitalize()
+            ),
+            "default": field.default
+            if field.default is not dataclasses.MISSING
+            else None,
+            "value": value,
+            "type": kind,
+            "lab": field.name in LAB_AGENCY_KEYS,
+            "read_only": field.name in {"database_encryption", "database_key_env"},
+            "choices": sorted(AGENCY_CHOICES[field.name])
+            if field.name in AGENCY_CHOICES and AGENCY_CHOICES[field.name]
+            else None,
+        }
+        bounds = numeric_bounds.get(field.name)
+        if isinstance(bounds, tuple) and len(bounds) == 2:
+            item["minimum"], item["maximum"] = bounds
+        result.append(item)
     return result
 
 
@@ -1300,17 +1568,32 @@ def validate_memory_changes(changes: dict[str, Any]) -> dict[str, Any]:
     for key, value in changes.items():
         if key not in allowed:
             raise ValueError(f"Unknown memory setting: {key}")
-        if key in MEMORY_BOOLEAN_KEYS:
+        kind = str(allowed[key].get("type") or "")
+        if kind == "boolean":
             if type(value) is not bool:
                 raise ValueError(f"{key} must be boolean")
-        elif key in MEMORY_INTEGER_KEYS:
+        elif kind == "integer":
             if type(value) is not int:
                 raise ValueError(f"{key} must be an integer")
-        elif key in MEMORY_NUMBER_KEYS:
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
+        elif kind == "number":
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+            ):
                 raise ValueError(f"{key} must be numeric")
-        elif not isinstance(value, str):
-            raise ValueError(f"{key} must be a string")
+        elif kind == "string":
+            if not isinstance(value, str):
+                raise ValueError(f"{key} must be a string")
+        else:
+            raise RuntimeError(f"Unsupported Memory schema type for {key}: {kind}")
+        minimum = allowed[key].get("minimum")
+        maximum = allowed[key].get("maximum")
+        if kind in {"integer", "number"}:
+            if minimum is not None and value < minimum:
+                raise ValueError(f"{key} must be at least {minimum}")
+            if maximum is not None and value > maximum:
+                raise ValueError(f"{key} must be at most {maximum}")
         choices = MEMORY_CHOICES.get(key)
         if choices and value not in choices:
             raise ValueError(f"{key} must be one of: {', '.join(sorted(choices))}")
@@ -1366,6 +1649,28 @@ def validate_agency_changes(changes: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def prune_config_backups(*, preserve: Path | None = None) -> int:
+    """Bound controller-created rollback copies without touching other files."""
+
+    root = control_dir() / "config-backups"
+    if not root.is_dir():
+        return 0
+    candidates = sorted(
+        (path for path in root.glob("config-*.yaml") if path.is_file()),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    protected = preserve.resolve() if preserve is not None else None
+    removed = 0
+    for path in candidates[CONFIG_BACKUP_RETENTION:]:
+        if protected is not None and path.resolve() == protected:
+            continue
+        with contextlib.suppress(OSError):
+            path.unlink()
+            removed += 1
+    return removed
+
+
 def atomic_config_update(plugin: str, changes: dict[str, Any]) -> dict[str, Any]:
     import yaml
 
@@ -1405,11 +1710,13 @@ def atomic_config_update(plugin: str, changes: dict[str, Any]) -> dict[str, Any]
     finally:
         if temporary and temporary.exists():
             temporary.unlink()
+    pruned = prune_config_backups(preserve=backup)
     return {
         "plugin": plugin,
         "changed": clean,
         "backup": str(backup),
         "restart_required": True,
+        "pruned_config_backups": pruned,
     }
 
 
@@ -1454,11 +1761,13 @@ def atomic_lab_profile_update(
     finally:
         if temporary and temporary.exists():
             temporary.unlink()
+    pruned = prune_config_backups(preserve=backup)
     return {
         "memory": {"changed": clean_memory},
         "agency": {"changed": clean_agency},
         "backup": str(backup),
         "restart_required": True,
+        "pruned_config_backups": pruned,
     }
 
 
@@ -1509,6 +1818,31 @@ def gateway_is_running() -> bool:
     )
 
 
+def gateway_main_pid() -> int:
+    completed = subprocess.run(
+        [
+            "systemctl",
+            "--user",
+            "show",
+            "hermes-gateway.service",
+            "--property",
+            "MainPID",
+            "--value",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=15,
+        env={**os.environ, "HERMES_HOME": str(hermes_home())},
+    )
+    if completed.returncode != 0:
+        return 0
+    try:
+        return max(0, int(completed.stdout.strip() or 0))
+    except ValueError:
+        return 0
+
+
 def restart_gateway_if_running(was_running: bool | None = None) -> dict[str, Any]:
     preserve_running = gateway_is_running() if was_running is None else was_running
     if not preserve_running:
@@ -1521,6 +1855,16 @@ def restart_gateway_if_running(was_running: bool | None = None) -> dict[str, Any
     }
 
 
+def validate_plugin_health(plugin: str) -> dict[str, Any]:
+    if plugin == "memory":
+        return hermes_command("consolidating_local", "doctor", timeout=90)
+    if plugin == "agency":
+        status = hermes_command("conscious-agency", "status", timeout=60)
+        heartbeat = hermes_command("conscious-agency", "heartbeat-status", timeout=60)
+        return {"status": status, "heartbeat": heartbeat}
+    raise ValueError("Unsupported plugin health check")
+
+
 def apply_lab_profile_transaction(
     memory_changes: dict[str, Any], agency_changes: dict[str, Any]
 ) -> dict[str, Any]:
@@ -1531,6 +1875,10 @@ def apply_lab_profile_transaction(
     gateway_was_running = gateway_is_running()
     try:
         gateway = restart_gateway_if_running(gateway_was_running)
+        health = {
+            "memory": validate_plugin_health("memory"),
+            "agency": validate_plugin_health("agency"),
+        }
     except Exception as apply_error:
         rollback_errors: list[str] = []
         try:
@@ -1541,13 +1889,23 @@ def apply_lab_profile_transaction(
             restart_gateway_if_running(gateway_was_running)
         except Exception as exc:
             rollback_errors.append(f"gateway rollback failed: {exc}")
+        for plugin in ("memory", "agency"):
+            try:
+                validate_plugin_health(plugin)
+            except Exception as exc:
+                rollback_errors.append(f"{plugin} rollback health failed: {exc}")
         detail = (
             f"Educational profile activation failed and was rolled back: {apply_error}"
         )
         if rollback_errors:
             detail += "; " + "; ".join(rollback_errors)
         raise RuntimeError(detail) from apply_error
-    return {**profile, "gateway": gateway, "restart_required": False}
+    return {
+        **profile,
+        "gateway": gateway,
+        "health": health,
+        "restart_required": False,
+    }
 
 
 def activate_agency_config_update(result: dict[str, Any]) -> dict[str, Any]:
@@ -1557,6 +1915,7 @@ def activate_agency_config_update(result: dict[str, Any]) -> dict[str, Any]:
     gateway_was_running = gateway_is_running()
     try:
         gateway = restart_gateway_if_running(gateway_was_running)
+        health = validate_plugin_health("agency")
     except Exception as apply_error:
         rollback_errors: list[str] = []
         try:
@@ -1565,6 +1924,7 @@ def activate_agency_config_update(result: dict[str, Any]) -> dict[str, Any]:
             rollback_errors.append(f"config rollback failed: {exc}")
         for label, action in (
             ("gateway", lambda: restart_gateway_if_running(gateway_was_running)),
+            ("agency health", lambda: validate_plugin_health("agency")),
         ):
             try:
                 action()
@@ -1576,10 +1936,55 @@ def activate_agency_config_update(result: dict[str, Any]) -> dict[str, Any]:
         if rollback_errors:
             detail += "; " + "; ".join(rollback_errors)
         raise RuntimeError(detail) from apply_error
-    return {**result, "gateway": gateway, "restart_required": False}
+    return {
+        **result,
+        "gateway": gateway,
+        "health": health,
+        "restart_required": False,
+    }
+
+
+def activate_memory_config_update(result: dict[str, Any]) -> dict[str, Any]:
+    """Make Memory settings effective and roll back config on failed activation."""
+
+    backup = Path(result["backup"])
+    gateway_was_running = gateway_is_running()
+    try:
+        gateway = restart_gateway_if_running(gateway_was_running)
+        health = validate_plugin_health("memory")
+    except Exception as apply_error:
+        rollback_errors: list[str] = []
+        try:
+            restore_internal_config_backup(backup)
+        except Exception as exc:
+            rollback_errors.append(f"config rollback failed: {exc}")
+        try:
+            restart_gateway_if_running(gateway_was_running)
+        except Exception as exc:
+            rollback_errors.append(f"gateway rollback failed: {exc}")
+        try:
+            validate_plugin_health("memory")
+        except Exception as exc:
+            rollback_errors.append(f"memory rollback health failed: {exc}")
+        detail = (
+            f"Memory configuration activation failed and was rolled back: {apply_error}"
+        )
+        if rollback_errors:
+            detail += "; " + "; ".join(rollback_errors)
+        raise RuntimeError(detail) from apply_error
+    return {
+        **result,
+        "gateway": gateway,
+        "health": health,
+        "restart_required": False,
+    }
 
 
 def backup_path(kind: str, database: str = "base") -> Path:
+    if kind not in {"memory", "agency"}:
+        raise ValueError("Unsupported backup kind")
+    if kind == "memory" and database != "base" and not SCOPE_ID.fullmatch(database):
+        raise ValueError("Unknown memory database ID")
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     suffix = f"-{database}" if kind == "memory" else ""
     root = secure_directory(control_dir() / "backups")
@@ -1588,16 +1993,203 @@ def backup_path(kind: str, database: str = "base") -> Path:
     return path
 
 
+def backup_manifest_path(database_path: Path) -> Path:
+    return Path(str(database_path) + ".manifest.json")
+
+
+def write_json_atomic(path: Path, value: dict[str, Any]) -> None:
+    secure_directory(path.parent)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=path.parent, delete=False
+        ) as handle:
+            json.dump(value, handle, ensure_ascii=False, sort_keys=True, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+            temporary = Path(handle.name)
+        os.replace(temporary, path)
+        temporary = None
+        with contextlib.suppress(OSError):
+            path.chmod(0o600)
+    finally:
+        if temporary and temporary.exists():
+            temporary.unlink()
+
+
+def schema_identity(connection: Any) -> dict[str, Any]:
+    version_row = connection.execute("PRAGMA user_version").fetchone()
+    tables = [
+        str(row[0])
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+        ).fetchall()
+    ]
+    canonical = "\n".join(tables)
+    return {
+        "user_version": int(version_row[0] if version_row else 0),
+        "table_count": len(tables),
+        "tables_sha256": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+    }
+
+
+def write_backup_manifest(
+    path: Path,
+    *,
+    kind: str,
+    database: str,
+    plugin_version: str,
+    encrypted: bool,
+    schema: dict[str, Any],
+    automatic: bool = False,
+) -> dict[str, Any]:
+    value = {
+        "format": 1,
+        "kind": kind,
+        "database": database,
+        "plugin_version": plugin_version,
+        "encrypted": encrypted,
+        "automatic": automatic,
+        "schema": schema,
+        "created_at": now_iso(),
+        "backup_sha256": file_fingerprint(path)["sha256"],
+    }
+    write_json_atomic(backup_manifest_path(path), value)
+    return value
+
+
+def prune_automatic_backups(*, kind: str, database: str) -> int:
+    """Retain recent rollback backups and preserve every manual/legacy file."""
+
+    if kind not in {"memory", "agency"}:
+        raise ValueError("Invalid backup kind")
+    directory = control_dir() / "backups" / kind
+    if not directory.is_dir():
+        return 0
+    candidates: list[Path] = []
+    for path in directory.glob("*.db"):
+        sidecar = backup_manifest_path(path)
+        if not sidecar.is_file():
+            continue
+        try:
+            metadata = json.loads(sidecar.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if (
+            isinstance(metadata, dict)
+            and metadata.get("format") == 1
+            and metadata.get("kind") == kind
+            and metadata.get("database") == database
+            and metadata.get("automatic") is True
+        ):
+            candidates.append(path)
+    candidates.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    removed = 0
+    for path in candidates[AUTOMATIC_BACKUPS_PER_TARGET:]:
+        sidecar = backup_manifest_path(path)
+        try:
+            path.unlink()
+            sidecar.unlink(missing_ok=True)
+            removed += 1
+        except OSError:
+            # A partially failed pair deletion remains visible/diagnosable. A
+            # later pass can finish it; never touch unrelated files.
+            continue
+    return removed
+
+
+def backup_manifest_shape_valid(value: Any) -> bool:
+    if not isinstance(value, dict) or value.get("format") != 1:
+        return False
+    schema = value.get("schema")
+    if (
+        value.get("kind") not in {"memory", "agency"}
+        or not isinstance(value.get("database"), str)
+        or not value["database"]
+        or not isinstance(value.get("plugin_version"), str)
+        or not value["plugin_version"]
+        or type(value.get("encrypted")) is not bool
+        or type(value.get("automatic", False)) is not bool
+        or not isinstance(schema, dict)
+        or type(schema.get("user_version")) is not int
+        or type(schema.get("table_count")) is not int
+        or not re.fullmatch(r"[a-f0-9]{64}", str(schema.get("tables_sha256") or ""))
+        or not re.fullmatch(r"[a-f0-9]{64}", str(value.get("backup_sha256") or ""))
+    ):
+        return False
+    try:
+        created = datetime.fromisoformat(str(value.get("created_at") or ""))
+    except ValueError:
+        return False
+    return created.tzinfo is not None
+
+
+def verify_backup_manifest(
+    path: Path, *, kind: str, database: str, encrypted: bool
+) -> dict[str, Any]:
+    sidecar = backup_manifest_path(path)
+    if not sidecar.is_file():
+        # Backups produced before manifest support remain recoverable, but are
+        # explicitly identified as legacy and still receive integrity checks
+        # during restore. Filename binding prevents cross-scope restoration.
+        expected_suffix = f"-{database}.db" if kind == "memory" else ".db"
+        if kind == "memory" and not path.name.endswith(expected_suffix):
+            raise RuntimeError(
+                "Legacy memory backup does not match the target database"
+            )
+        return {
+            "legacy": True,
+            "verified": False,
+            "backup_sha256": file_fingerprint(path).get("sha256", ""),
+        }
+    try:
+        value = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Backup manifest is unreadable") from exc
+    if not backup_manifest_shape_valid(value):
+        raise RuntimeError("Backup manifest structure is invalid")
+    if value.get("kind") != kind or value.get("database") != database:
+        raise RuntimeError("Backup manifest does not match the restore target")
+    if value["encrypted"] is not encrypted:
+        raise RuntimeError("Backup encryption mode does not match the active store")
+    actual_digest = file_fingerprint(path).get("sha256", "")
+    if not actual_digest or not hmac.compare_digest(
+        str(value.get("backup_sha256") or ""), actual_digest
+    ):
+        raise RuntimeError("Backup digest does not match its manifest")
+    return {**value, "legacy": False, "verified": True}
+
+
 def memory_backup(payload: dict[str, Any], automatic: bool = False) -> dict[str, Any]:
     database = str(payload.get("database") or "base")
+    # Resolve the opaque database ID before creating any path. This prevents a
+    # crafted ID from influencing backup directory creation.
+    selected_memory_path(payload)
     target = backup_path("memory", database)
     with memory_store(payload) as store:
+        schema = schema_identity(store._conn)
         result = store.backup_to(target)
+    config = plugin_config(read_yaml(), MEMORY_KEY)
+    backup = Path(result)
+    backup_manifest = write_backup_manifest(
+        backup,
+        kind="memory",
+        database=database,
+        plugin_version=str(manifest(memory_module_path()).get("version") or "unknown"),
+        encrypted=config_bool(config.get("database_encryption")),
+        schema=schema,
+        automatic=automatic,
+    )
+    pruned = prune_automatic_backups(kind="memory", database=database)
     return {
         "kind": "memory",
         "id": Path(result).name,
         "path": result,
         "automatic": automatic,
+        "manifest_verified": backup_manifest["backup_sha256"]
+        == file_fingerprint(backup).get("sha256"),
+        "pruned_automatic_backups": pruned,
     }
 
 
@@ -1612,6 +2204,7 @@ def agency_backup(automatic: bool = False) -> dict[str, Any]:
         ) as handle:
             temporary = Path(handle.name)
         with store.connection() as source:
+            schema = schema_identity(source)
             destination = store._driver.connect(str(temporary), timeout=10.0)
             if config.database_encryption:
                 secret = os.environ[config.database_key_env].encode("utf-8")
@@ -1633,11 +2226,24 @@ def agency_backup(automatic: bool = False) -> dict[str, Any]:
             destination.close()
         if temporary and temporary.exists():
             temporary.unlink()
+    backup_manifest = write_backup_manifest(
+        target,
+        kind="agency",
+        database="agency",
+        plugin_version=str(manifest(agency_module_path()).get("version") or "unknown"),
+        encrypted=config.database_encryption is True,
+        schema=schema,
+        automatic=automatic,
+    )
+    pruned = prune_automatic_backups(kind="agency", database="agency")
     return {
         "kind": "agency",
         "id": target.name,
         "path": str(target),
         "automatic": automatic,
+        "manifest_verified": backup_manifest["backup_sha256"]
+        == file_fingerprint(target).get("sha256"),
+        "pruned_automatic_backups": pruned,
     }
 
 
@@ -1719,20 +2325,93 @@ def restore_agency(source: Path) -> dict[str, Any]:
                 held.unlink()
 
 
+def memory_restore_health(payload: dict[str, Any]) -> dict[str, Any]:
+    with memory_store(payload) as store:
+        report = store.doctor(repair=False)
+    integrity = report.get("integrity") if isinstance(report, dict) else None
+    structurally_healthy = (
+        isinstance(report, dict)
+        and integrity == ["ok"]
+        and not report.get("fts_mismatches")
+        and not any((report.get("dangling_references") or {}).values())
+    )
+    if not structurally_healthy:
+        raise RuntimeError(f"Restored memory database failed doctor: {integrity}")
+    return {
+        "ok": True,
+        "integrity": integrity,
+        "failed_operations": int(report.get("failed_operations") or 0),
+    }
+
+
+def agency_restore_health() -> dict[str, Any]:
+    _, _, engine, store = agency_objects()
+    with store.connection() as connection:
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()
+    if not integrity or str(integrity[0]) != "ok":
+        raise RuntimeError(
+            f"Restored agency database failed integrity check: {integrity}"
+        )
+    snapshot = engine.snapshot()
+    if not isinstance(snapshot, dict) or "runtime" not in snapshot:
+        raise RuntimeError(
+            "Restored agency database could not produce a runtime snapshot"
+        )
+    return {"ok": True, "integrity": "ok"}
+
+
 def backup_inventory() -> list[dict[str, Any]]:
-    root = secure_directory(control_dir() / "backups")
+    root = control_dir() / "backups"
     result = []
     if root.is_dir():
         for kind in ("memory", "agency"):
             directory = root / kind
             if not directory.is_dir():
                 continue
-            secure_directory(directory)
             for path in sorted(
                 directory.glob("*.db"),
                 key=lambda item: item.stat().st_mtime,
                 reverse=True,
             )[:100]:
+                manifest_status: dict[str, Any] = {
+                    "manifest": False,
+                    "verified": False,
+                    "legacy": True,
+                }
+                sidecar = backup_manifest_path(path)
+                if sidecar.is_file():
+                    try:
+                        metadata = json.loads(sidecar.read_text(encoding="utf-8"))
+                        if not isinstance(metadata, dict):
+                            raise ValueError("manifest root must be an object")
+                        actual_digest = file_fingerprint(path).get("sha256", "")
+                        manifest_status = {
+                            "manifest": True,
+                            "verified": (
+                                backup_manifest_shape_valid(metadata)
+                                and metadata.get("kind") == kind
+                                and bool(actual_digest)
+                                and hmac.compare_digest(
+                                    str(metadata.get("backup_sha256") or ""),
+                                    actual_digest,
+                                )
+                            ),
+                            "legacy": False,
+                            "database": str(metadata.get("database") or ""),
+                            "automatic": metadata.get("automatic") is True,
+                            "encrypted": metadata.get("encrypted")
+                            if type(metadata.get("encrypted")) is bool
+                            else None,
+                            "plugin_version": str(
+                                metadata.get("plugin_version") or "unknown"
+                            ),
+                        }
+                    except (OSError, ValueError, json.JSONDecodeError):
+                        manifest_status = {
+                            "manifest": True,
+                            "verified": False,
+                            "legacy": False,
+                        }
                 result.append(
                     {
                         "id": path.name,
@@ -1741,21 +2420,197 @@ def backup_inventory() -> list[dict[str, Any]]:
                         "modified": datetime.fromtimestamp(
                             path.stat().st_mtime, UTC
                         ).isoformat(),
+                        **manifest_status,
                     }
                 )
     return result
 
 
 def resolve_backup(kind: str, backup_id: str) -> Path:
+    if kind not in {"memory", "agency"}:
+        raise ValueError("Invalid backup kind")
     if not re.fullmatch(r"[A-Za-z0-9_.-]{1,180}\.db", backup_id):
         raise ValueError("Invalid backup ID")
-    root = secure_directory(
-        secure_directory(control_dir() / "backups") / kind
-    ).resolve()
+    root = (control_dir() / "backups" / kind).resolve()
     path = (root / backup_id).resolve()
     if root not in path.parents or not path.is_file():
         raise FileNotFoundError("Controller backup not found")
     return path
+
+
+def validate_mutation_preflight(operation: str, payload: dict[str, Any]) -> None:
+    if operation not in MUTATION_OPERATIONS:
+        raise ValueError("Unsupported mutation")
+    unexpected = sorted(set(payload) - MUTATION_PAYLOAD_FIELDS[operation])
+    if unexpected:
+        raise ValueError(
+            f"Unsupported payload field for {operation}: {', '.join(unexpected)}"
+        )
+    if operation.startswith("memory_"):
+        selected_memory_path(payload)
+    if operation == "memory_export":
+        strict_bool(payload, "include_sensitive")
+    if operation == "memory_resolve_approval":
+        strict_bool(payload, "approved", required=True)
+    if operation == "memory_update_item":
+        logical = str(payload.get("table") or "")
+        if logical not in MEMORY_EDIT_FIELDS:
+            raise ValueError("This memory ledger is not operator-editable")
+        if logical == "sessions":
+            if not str(payload.get("id") or "").strip():
+                raise ValueError("id must identify a memory session")
+        else:
+            strict_positive_int(payload, "id")
+        if not isinstance(payload.get("changes"), dict) or not payload["changes"]:
+            raise ValueError("At least one memory field change is required")
+        table = MEMORY_TABLES[logical]
+        id_field = "session_id" if logical == "sessions" else "id"
+        row_id = (
+            str(payload.get("id") or "").strip()
+            if id_field == "session_id"
+            else strict_positive_int(payload, "id")
+        )
+        with memory_store(payload, read_only=True) as store:
+            columns = table_columns_memory(store, table)
+            current = store._fetchone(
+                f"SELECT * FROM {table} WHERE {id_field} = ?", (row_id,)
+            )
+            if not current:
+                raise ValueError("The selected memory item no longer exists")
+            clean = validate_memory_patch(logical, payload["changes"], current)
+            if not set(clean).issubset(columns):
+                raise ValueError(
+                    "The installed plugin schema does not support one of these fields"
+                )
+    if operation in {
+        "memory_deactivate_fact",
+        "memory_resolve_approval",
+        "memory_resolve_intention",
+    }:
+        row_id = strict_positive_int(payload, "id")
+        table, condition = {
+            "memory_deactivate_fact": ("facts", "active=1"),
+            "memory_resolve_approval": ("memory_approvals", "status='pending'"),
+            "memory_resolve_intention": ("prospective_memories", "1=1"),
+        }[operation]
+        with memory_store(payload, read_only=True) as store:
+            if not store._fetchone(
+                f"SELECT id FROM {table} WHERE id=? AND {condition}", (row_id,)
+            ):
+                raise ValueError("The selected memory item is no longer actionable")
+    if operation == "memory_restore":
+        resolve_backup("memory", str(payload.get("backup_id") or ""))
+    elif operation == "agency_restore":
+        resolve_backup("agency", str(payload.get("backup_id") or ""))
+    elif operation == "config_apply":
+        plugin = str(payload.get("plugin") or "")
+        changes = payload.get("changes")
+        if plugin not in {"memory", "agency"} or not isinstance(changes, dict):
+            raise ValueError("Config apply requires a plugin and changes mapping")
+        if not changes:
+            raise ValueError("At least one configuration change is required")
+        if plugin == "memory":
+            validate_memory_changes(changes)
+        else:
+            validate_agency_changes(changes)
+    elif operation == "lab_apply_profile" and payload.get("profile") not in {
+        "recommended",
+        "unrestricted_research",
+    }:
+        raise ValueError("Unknown Educational Lab profile")
+    if operation == "agency_add_intention":
+        title = str(payload.get("title") or "").strip()
+        if not title or len(title) > 500:
+            raise ValueError("title must be non-empty and at most 500 characters")
+        priority = payload.get("priority", 50)
+        if type(priority) is not int or not 0 <= priority <= 100:
+            raise ValueError("priority must be an integer between 0 and 100")
+        if payload.get("autonomy", "propose") not in {"reflect", "propose", "message"}:
+            raise ValueError("Invalid autonomy")
+        if payload.get("due_at") is not None and str(payload.get("due_at")).strip():
+            _, _, _, store = agency_objects(read_only=True)
+            store._normalize_due_at(payload["due_at"])
+    if operation == "agency_update_intention":
+        intention_id = str(payload.get("id") or "").strip()
+        if not intention_id:
+            raise ValueError("An intention ID is required")
+        status = payload.get("status")
+        if status not in {None, "active", "blocked", "completed", "cancelled"}:
+            raise ValueError("Invalid status")
+        if "priority" in payload and (
+            type(payload["priority"]) is not int or not 0 <= payload["priority"] <= 100
+        ):
+            raise ValueError("priority must be an integer between 0 and 100")
+        _, _, _, store = agency_objects(read_only=True)
+        if store.get_intention(intention_id) is None:
+            raise ValueError("The selected agency intention no longer exists")
+        if payload.get("due_at") is not None and str(payload.get("due_at")).strip():
+            store._normalize_due_at(payload["due_at"])
+    for agency_action, field, maximum in (
+        ("agency_focus", "focus", 1000),
+        ("agency_add_question", "question", 1000),
+        ("agency_add_observation", "observation", 2000),
+    ):
+        if operation == agency_action:
+            value = str(payload.get(field) or "").strip()
+            if not value or len(value) > maximum:
+                raise ValueError(
+                    f"{field} must be non-empty and at most {maximum} characters"
+                )
+    if operation == "agency_resolve_question":
+        question_id = str(payload.get("id") or "").strip()
+        if not question_id:
+            raise ValueError("A question ID is required")
+        _, _, engine, _ = agency_objects(read_only=True)
+        questions = engine.snapshot().get("workspace", {}).get("questions", [])
+        if question_id not in {
+            str(item.get("id") or "") for item in questions if isinstance(item, dict)
+        }:
+            raise ValueError("The selected agency question no longer exists")
+
+
+def mutation_preflight(payload: dict[str, Any]) -> dict[str, Any]:
+    operation = str(payload.get("action") or "")
+    action_payload = payload.get("payload")
+    if not isinstance(action_payload, dict):
+        raise ValueError("Preflight payload must contain an action payload mapping")
+    validate_mutation_preflight(operation, action_payload)
+    payload_canonical = json.dumps(
+        action_payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    state: dict[str, Any] = {
+        "operation": operation,
+        "payload": audit_safe(action_payload),
+        "payload_sha256": hashlib.sha256(
+            payload_canonical.encode("utf-8")
+        ).hexdigest(),
+        "config": file_fingerprint(hermes_home() / "config.yaml"),
+        "control_bridge": file_fingerprint(Path(__file__).resolve()),
+        "memory_source": plugin_source_fingerprint(memory_module_path()),
+        "agency_source": plugin_source_fingerprint(agency_module_path()),
+    }
+    if operation.startswith("memory_"):
+        state["memory"] = database_fingerprint(selected_memory_path(action_payload))
+    if operation.startswith("agency_"):
+        _, load_config, _, _ = import_agency()
+        agency_path = Path(load_config().db_path).expanduser().resolve()
+        state["agency"] = database_fingerprint(agency_path)
+    if operation == "memory_restore":
+        state["restore_source"] = file_fingerprint(
+            resolve_backup("memory", str(action_payload.get("backup_id") or ""))
+        )
+    elif operation == "agency_restore":
+        state["restore_source"] = file_fingerprint(
+            resolve_backup("agency", str(action_payload.get("backup_id") or ""))
+        )
+    canonical = json.dumps(state, sort_keys=True, separators=(",", ":"))
+    return {
+        "token": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        "validated_at": now_iso(),
+    }
 
 
 def hermes_command(*args: str, timeout: int = 45) -> dict[str, Any]:
@@ -1803,13 +2658,95 @@ def quiesced_gateway():
         hermes_command("gateway", "stop", timeout=45)
     try:
         yield {"was_running": was_running}
-    finally:
+    except Exception as operation_error:
+        if was_running:
+            try:
+                hermes_command("gateway", "start", timeout=60)
+            except Exception as restart_error:
+                raise RuntimeError(
+                    f"{operation_error}; gateway restart also failed: {restart_error}"
+                ) from operation_error
+        raise
+    else:
         if was_running:
             hermes_command("gateway", "start", timeout=60)
 
 
+@contextlib.contextmanager
+def mutation_lock():
+    """Allow only one state-changing Control bridge process at a time."""
+
+    if not _MUTATION_THREAD_LOCK.acquire(blocking=False):
+        raise RuntimeError("Another Control Center mutation is already in progress")
+    path = control_dir() / "mutation.lock"
+    secure_directory(path.parent)
+    handle = None
+    locked = False
+    try:
+        handle = path.open("a+b")
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                handle.seek(0, os.SEEK_END)
+                if handle.tell() == 0:
+                    handle.write(b"0")
+                    handle.flush()
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            locked = True
+        except (OSError, BlockingIOError) as exc:
+            raise RuntimeError(
+                "Another Control Center mutation is already in progress"
+            ) from exc
+        with contextlib.suppress(OSError):
+            path.chmod(0o600)
+        yield
+    finally:
+        if handle is not None:
+            if locked:
+                if os.name == "nt":
+                    import msvcrt
+
+                    handle.seek(0)
+                    with contextlib.suppress(OSError):
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    with contextlib.suppress(OSError):
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            handle.close()
+        _MUTATION_THREAD_LOCK.release()
+
+
 def audit_path() -> Path:
     return control_dir() / "audit.jsonl"
+
+
+@contextlib.contextmanager
+def locked_audit_file(path: Path, mode: str, *, exclusive: bool):
+    """Lock the audit stream across bridge processes on WSL."""
+
+    with _AUDIT_THREAD_LOCK, path.open(mode, encoding="utf-8") as handle:
+        flock = None
+        try:
+            if os.name != "nt":
+                import fcntl
+
+                flock = fcntl
+                flock.flock(
+                    handle.fileno(), flock.LOCK_EX if exclusive else flock.LOCK_SH
+                )
+            yield handle
+        finally:
+            if flock is not None:
+                with contextlib.suppress(OSError):
+                    flock.flock(handle.fileno(), flock.LOCK_UN)
 
 
 def audit_safe(value: Any, key: str = "", depth: int = 0) -> Any:
@@ -1842,29 +2779,32 @@ def append_audit(
     operation: str, payload: dict[str, Any], result: Any, backup: Any = None
 ) -> dict[str, Any]:
     path = audit_path()
+    secure_directory(path.parent)
     previous = "0" * 64
-    if path.is_file():
-        with path.open("rb") as handle:
-            for line in handle:
-                if line.strip():
-                    try:
-                        previous = str(json.loads(line)["hash"])
-                    except Exception:
-                        previous = "invalid"
-    event = {
-        "id": uuid.uuid4().hex,
-        "at": now_iso(),
-        "operation": operation,
-        "payload": audit_safe(payload),
-        "result": audit_safe(result),
-        "backup": audit_safe(backup),
-        "previous_hash": previous,
-    }
-    canonical = json.dumps(
-        event, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    )
-    event["hash"] = hashlib.sha256((previous + canonical).encode("utf-8")).hexdigest()
-    with path.open("a", encoding="utf-8") as handle:
+    with locked_audit_file(path, "a+", exclusive=True) as handle:
+        handle.seek(0)
+        for line in handle:
+            if line.strip():
+                try:
+                    previous = str(json.loads(line)["hash"])
+                except Exception:
+                    previous = "invalid"
+        event = {
+            "id": uuid.uuid4().hex,
+            "at": now_iso(),
+            "operation": operation,
+            "payload": audit_safe(payload),
+            "result": audit_safe(result),
+            "backup": audit_safe(backup),
+            "previous_hash": previous,
+        }
+        canonical = json.dumps(
+            event, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        event["hash"] = hashlib.sha256(
+            (previous + canonical).encode("utf-8")
+        ).hexdigest()
+        handle.seek(0, os.SEEK_END)
         handle.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
         handle.flush()
         os.fsync(handle.fileno())
@@ -1879,26 +2819,34 @@ def read_audit(payload: dict[str, Any]) -> dict[str, Any]:
         return {"valid": True, "events": []}
     previous = "0" * 64
     valid = True
-    rows = []
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        if not raw.strip():
-            continue
-        try:
-            event = json.loads(raw)
-            claimed = event.pop("hash")
-            canonical = json.dumps(
-                event, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-            )
-            actual = hashlib.sha256((previous + canonical).encode("utf-8")).hexdigest()
-            valid = (
-                valid and event.get("previous_hash") == previous and claimed == actual
-            )
-            previous = claimed
-            event["hash"] = claimed
-            rows.append(event)
-        except Exception:
-            valid = False
-    return {"valid": valid, "events": list(reversed(rows[-safe_limit(payload, 100) :]))}
+    limit = safe_limit(payload, 100)
+    rows: list[dict[str, Any]] = []
+    with locked_audit_file(path, "r", exclusive=False) as handle:
+        for raw in handle:
+            if not raw.strip():
+                continue
+            try:
+                event = json.loads(raw)
+                claimed = event.pop("hash")
+                canonical = json.dumps(
+                    event, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                )
+                actual = hashlib.sha256(
+                    (previous + canonical).encode("utf-8")
+                ).hexdigest()
+                valid = (
+                    valid
+                    and event.get("previous_hash") == previous
+                    and claimed == actual
+                )
+                previous = claimed
+                event["hash"] = claimed
+                rows.append(event)
+                if len(rows) > limit:
+                    rows.pop(0)
+            except Exception:
+                valid = False
+    return {"valid": valid, "events": list(reversed(rows))}
 
 
 def wiki_root() -> Path:
@@ -1986,7 +2934,20 @@ def probe() -> dict[str, Any]:
     }
 
 
-def execute_mutation(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
+def _execute_mutation_locked(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
+    expected_preflight = payload.get("_preflight_token")
+    if not isinstance(expected_preflight, str) or not re.fullmatch(
+        r"[a-f0-9]{64}", expected_preflight
+    ):
+        raise ValueError("A valid mutation preflight token is required")
+    payload = {
+        key: value for key, value in payload.items() if key != "_preflight_token"
+    }
+    current_preflight = mutation_preflight({"action": operation, "payload": payload})
+    if not hmac.compare_digest(expected_preflight, current_preflight["token"]):
+        raise RuntimeError(
+            "The target state changed after preview; preview the operation again"
+        )
     backup = None
     result: Any
     if operation == "memory_backup":
@@ -1996,8 +2957,31 @@ def execute_mutation(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
     elif operation == "agency_restore":
         backup = agency_backup(automatic=True)
         source = resolve_backup("agency", str(payload.get("backup_id") or ""))
+        _, agency_config, _, _ = agency_objects()
+        verification = verify_backup_manifest(
+            source,
+            kind="agency",
+            database="agency",
+            encrypted=agency_config.database_encryption is True,
+        )
         with quiesced_gateway():
-            result = restore_agency(source)
+            try:
+                result = restore_agency(source)
+                result["health"] = agency_restore_health()
+            except Exception as restore_error:
+                rollback_error = None
+                try:
+                    restore_agency(Path(backup["path"]))
+                    agency_restore_health()
+                except Exception as exc:
+                    rollback_error = exc
+                detail = (
+                    f"Agency restore failed and the previous database was restored: {restore_error}"
+                    if rollback_error is None
+                    else f"Agency restore failed: {restore_error}; rollback failed: {rollback_error}"
+                )
+                raise RuntimeError(detail) from restore_error
+        result["manifest"] = verification
     elif operation == "memory_export":
         backup = memory_backup(payload, automatic=True)
         target = (
@@ -2007,9 +2991,8 @@ def execute_mutation(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
         )
         secure_directory(target.parent)
         with memory_store(payload) as store:
-            data = store.export_data(
-                redact_sensitive=not bool(payload.get("include_sensitive", False))
-            )
+            include_sensitive = strict_bool(payload, "include_sensitive")
+            data = store.export_data(redact_sensitive=not include_sensitive)
         temporary = None
         try:
             with tempfile.NamedTemporaryFile(
@@ -2028,11 +3011,11 @@ def execute_mutation(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
                 temporary.unlink()
         result = {
             "path": str(target),
-            "sensitive_redacted": not bool(payload.get("include_sensitive", False)),
+            "sensitive_redacted": not include_sensitive,
         }
     elif operation == "memory_deactivate_fact":
         backup = memory_backup(payload, automatic=True)
-        fact_id = int(payload.get("id"))
+        fact_id = strict_positive_int(payload, "id")
         with memory_store(payload) as store:
             result = {
                 "id": fact_id,
@@ -2047,8 +3030,8 @@ def execute_mutation(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
         backup = memory_backup(payload, automatic=True)
         with memory_store(payload) as store:
             result = store.resolve_approval(
-                int(payload.get("id")),
-                approved=bool(payload.get("approved")),
+                strict_positive_int(payload, "id"),
+                approved=strict_bool(payload, "approved", required=True),
                 resolution=str(payload.get("resolution") or "Resolved by operator")[
                     :500
                 ],
@@ -2059,7 +3042,9 @@ def execute_mutation(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
         if status not in {"completed", "cancelled", "pending"}:
             raise ValueError("Unsupported prospective-memory status")
         with memory_store(payload) as store:
-            result = store.resolve_intention(int(payload.get("id")), status=status)
+            result = store.resolve_intention(
+                strict_positive_int(payload, "id"), status=status
+            )
     elif operation == "memory_retry_failed":
         backup = memory_backup(payload, automatic=True)
         with memory_store(payload) as store:
@@ -2070,20 +3055,53 @@ def execute_mutation(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
             }
     elif operation == "memory_maintain":
         backup = memory_backup(payload, automatic=True)
-        with memory_store(payload) as store:
-            result = store.maintain()
+        with quiesced_gateway():
+            with memory_store(payload) as store:
+                result = store.maintain()
     elif operation == "memory_restore":
         backup = memory_backup(payload, automatic=True)
         source = resolve_backup("memory", str(payload.get("backup_id") or ""))
         destination = selected_memory_path(payload)
+        database = str(payload.get("database") or "base")
+        memory_config = plugin_config(read_yaml(), MEMORY_KEY)
+        encrypted = config_bool(memory_config.get("database_encryption"))
+        verification = verify_backup_manifest(
+            source,
+            kind="memory",
+            database=database,
+            encrypted=encrypted,
+        )
         with quiesced_gateway():
             from consolidating_local.admin import _restore
 
-            result = _restore(
-                source,
-                destination,
-                encryption_key=os.environ.get("CONSOLIDATING_MEMORY_DB_KEY", ""),
+            encryption_key = (
+                os.environ.get("CONSOLIDATING_MEMORY_DB_KEY", "") if encrypted else ""
             )
+            try:
+                result = _restore(
+                    source,
+                    destination,
+                    encryption_key=encryption_key,
+                )
+                result["health"] = memory_restore_health(payload)
+            except Exception as restore_error:
+                rollback_error = None
+                try:
+                    _restore(
+                        Path(backup["path"]),
+                        destination,
+                        encryption_key=encryption_key,
+                    )
+                    memory_restore_health(payload)
+                except Exception as exc:
+                    rollback_error = exc
+                detail = (
+                    f"Memory restore failed and the previous database was restored: {restore_error}"
+                    if rollback_error is None
+                    else f"Memory restore failed: {restore_error}; rollback failed: {rollback_error}"
+                )
+                raise RuntimeError(detail) from restore_error
+        result["manifest"] = verification
     elif operation == "config_apply":
         plugin = str(payload.get("plugin") or "")
         if plugin not in {"memory", "agency"} or not isinstance(
@@ -2093,6 +3111,8 @@ def execute_mutation(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
         result = atomic_config_update(plugin, payload["changes"])
         if plugin == "agency":
             result = activate_agency_config_update(result)
+        else:
+            result = activate_memory_config_update(result)
         backup = {"path": result["backup"], "kind": "config"}
     elif operation == "agency_pause":
         backup = agency_backup(automatic=True)
@@ -2237,6 +3257,11 @@ def execute_mutation(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
     return {"result": result, "backup": backup, "audit": audit}
 
 
+def execute_mutation(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
+    with mutation_lock():
+        return _execute_mutation_locked(operation, payload)
+
+
 def execute(operation: str, payload: dict[str, Any], mutation: bool) -> Any:
     if operation == "probe":
         return probe()
@@ -2254,6 +3279,7 @@ def execute(operation: str, payload: dict[str, Any], mutation: bool) -> Any:
         "config_schema": config_schema,
         "wiki_list": wiki_list,
         "wiki_read": lambda: wiki_read(payload),
+        "mutation_preflight": lambda: mutation_preflight(payload),
     }
     handler = reads.get(operation)
     if not handler:
@@ -2269,7 +3295,10 @@ def main() -> int:
             raise ValueError("Protocol mismatch")
         operation = request.get("operation")
         payload = request.get("payload") or {}
-        mutation = bool(request.get("mutation", False))
+        mutation_value = request.get("mutation", False)
+        if type(mutation_value) is not bool:
+            raise ValueError("mutation must be boolean")
+        mutation = mutation_value
         if not isinstance(operation, str) or not isinstance(payload, dict):
             raise ValueError("Malformed request")
         load_dotenv()
@@ -2277,7 +3306,9 @@ def main() -> int:
         response = {"protocol": PROTOCOL, "ok": True, "data": data}
     except Exception as exc:
         failed_audit = None
-        if request.get("mutation") and isinstance(request.get("operation"), str):
+        if request.get("mutation") is True and isinstance(
+            request.get("operation"), str
+        ):
             with contextlib.suppress(Exception):
                 failed_audit = append_audit(
                     request["operation"],

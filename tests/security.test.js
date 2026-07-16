@@ -44,3 +44,13 @@ test('renderer CSP blocks remote code and unsafe inline script', () => {
 test('retired unrestricted database helper is gone', () => {
   assert.equal(fs.existsSync(path.join(root, 'db_query.py')), false);
 });
+
+test('the complete test command includes the Electron smoke gate', () => {
+  const pkg = JSON.parse(read('package.json'));
+  assert.match(pkg.scripts['test:all'], /npm run test:electron/);
+});
+
+test('renderer serializes confirmed mutations and main bounds previews', () => {
+  assert.match(read('renderer/app.js'), /mutationInFlight/);
+  assert.match(read('main.js'), /MAX_PENDING_PLANS\s*=\s*100/);
+});

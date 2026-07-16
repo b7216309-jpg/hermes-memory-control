@@ -5,6 +5,7 @@ const { spawn } = require('node:child_process');
 
 const MAX_OUTPUT = 16 * 1024 * 1024;
 const DEFAULT_TIMEOUT = 45_000;
+const MUTATION_TIMEOUT = 300_000;
 const scriptCache = new Map();
 
 function run(executable, args, { input = '', timeout = DEFAULT_TIMEOUT, maxOutput = MAX_OUTPUT } = {}) {
@@ -17,30 +18,45 @@ function run(executable, args, { input = '', timeout = DEFAULT_TIMEOUT, maxOutpu
     let stdout = Buffer.alloc(0);
     let stderr = Buffer.alloc(0);
     let settled = false;
-    const timer = setTimeout(() => {
-      child.kill();
-      if (!settled) reject(new Error(`Operation timed out after ${timeout / 1000}s`));
-      settled = true;
-    }, timeout);
-    const append = (current, chunk) => {
-      const next = Buffer.concat([current, chunk]);
-      if (next.length > maxOutput) {
-        child.kill();
-        throw new Error('WSL bridge output exceeded the safety limit');
-      }
-      return next;
-    };
-    child.stdout.on('data', (chunk) => { try { stdout = append(stdout, chunk); } catch (error) { reject(error); } });
-    child.stderr.on('data', (chunk) => { try { stderr = append(stderr, chunk); } catch (error) { reject(error); } });
-    child.on('error', (error) => { clearTimeout(timer); if (!settled) reject(error); settled = true; });
-    child.on('close', (code) => {
-      clearTimeout(timer);
+    let timer;
+    const finish = (error, value) => {
       if (settled) return;
       settled = true;
-      if (code !== 0) {
-        reject(new Error(stderr.toString('utf8').trim() || `WSL bridge exited with code ${code}`));
-      } else resolve(stdout.toString('utf8'));
+      if (timer) clearTimeout(timer);
+      if (error) reject(error);
+      else resolve(value);
+    };
+    const abort = (error) => {
+      finish(error);
+      if (!child.killed) child.kill();
+    };
+    timer = setTimeout(() => {
+      abort(new Error(`Operation timed out after ${timeout / 1000}s`));
+    }, timeout);
+    const append = (current, chunk) => {
+      if (current.length + chunk.length > maxOutput) return null;
+      return Buffer.concat([current, chunk]);
+    };
+    child.stdout.on('data', (chunk) => {
+      if (settled) return;
+      const next = append(stdout, chunk);
+      if (next === null) abort(new Error('WSL bridge output exceeded the safety limit'));
+      else stdout = next;
     });
+    child.stderr.on('data', (chunk) => {
+      if (settled) return;
+      const next = append(stderr, chunk);
+      if (next === null) abort(new Error('WSL bridge output exceeded the safety limit'));
+      else stderr = next;
+    });
+    child.on('error', finish);
+    child.on('close', (code) => {
+      if (settled) return;
+      if (code !== 0) {
+        finish(new Error(stderr.toString('utf8').trim() || `WSL bridge exited with code ${code}`));
+      } else finish(null, stdout.toString('utf8'));
+    });
+    child.stdin.on('error', finish);
     child.stdin.end(input, 'utf8');
   });
 }
@@ -86,18 +102,19 @@ async function bridgeScript(profile) {
 }
 
 async function runBridge(profile, operation, payload, { mutation = false } = {}) {
+  if (typeof mutation !== 'boolean') throw new Error('mutation must be boolean');
   const script = await bridgeScript(profile);
   const python = `${profile.home}/hermes-agent/venv/bin/python3`;
   const request = JSON.stringify({
     protocol: 2,
     operation,
     payload,
-    mutation: Boolean(mutation),
+    mutation,
   });
   const raw = await run(
     'wsl.exe',
     ['-d', profile.distro, '--', 'env', `HERMES_HOME=${profile.home}`, python, script],
-    { input: request, timeout: mutation ? 120_000 : DEFAULT_TIMEOUT },
+    { input: request, timeout: mutation ? MUTATION_TIMEOUT : DEFAULT_TIMEOUT },
   );
   let result;
   try {

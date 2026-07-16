@@ -38,6 +38,35 @@ const ACTIONS = Object.freeze({
   lab_apply_profile: ['Apply Educational Lab profile', 'Apply a reversible high-risk research profile after creating backups.', 'critical', 'APPLY EDUCATIONAL PROFILE'],
 });
 
+const ACTION_PAYLOAD_FIELDS = Object.freeze({
+  memory_backup: ['database'],
+  memory_export: ['database', 'include_sensitive'],
+  memory_deactivate_fact: ['database', 'id'],
+  memory_update_item: ['database', 'table', 'id', 'changes'],
+  memory_resolve_approval: ['database', 'id', 'approved', 'resolution'],
+  memory_resolve_intention: ['database', 'id', 'status'],
+  memory_retry_failed: ['database', 'limit'],
+  memory_maintain: ['database'],
+  memory_restore: ['database', 'backup_id'],
+  config_apply: ['plugin', 'changes'],
+  agency_backup: [],
+  agency_pause: ['reason'],
+  agency_resume: [],
+  agency_focus: ['focus', 'reason'],
+  agency_add_intention: ['title', 'rationale', 'priority', 'autonomy', 'due_at'],
+  agency_update_intention: ['id', 'status', 'priority', 'due_at'],
+  agency_add_question: ['question'],
+  agency_resolve_question: ['id'],
+  agency_add_observation: ['observation'],
+  agency_heartbeat_run: [],
+  agency_heartbeat_enable: [],
+  agency_heartbeat_disable: [],
+  agency_migrate_heartbeat: [],
+  agency_restore: ['backup_id'],
+  gateway_restart: [],
+  lab_apply_profile: ['profile'],
+});
+
 const LAB_KEYS = new Set([
   'allow_credential_memory', 'allow_sensitive_model_processing', 'database_encryption',
   'export_redact_sensitive', 'sensitive_memory', 'require_prior_user_interaction',
@@ -80,15 +109,38 @@ function cleanPayload(value, options = {}, depth = 0) {
 
 function isLabAction(action, payload = {}) {
   if (action === 'lab_apply_profile') return true;
-  if (action === 'memory_export' && payload.include_sensitive === true) return true;
+  if (action === 'memory_export') {
+    if ('include_sensitive' in payload && typeof payload.include_sensitive !== 'boolean') {
+      throw new Error('include_sensitive must be boolean');
+    }
+    if (payload.include_sensitive === true) return true;
+  }
   if (action !== 'config_apply') return false;
   const changes = payload.changes || {};
   return Object.keys(changes).some((key) => LAB_KEYS.has(key));
 }
 
+function validateMutationPayload(action, payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('Mutation payload must be an object');
+  }
+  if (action === 'memory_resolve_approval' && typeof payload.approved !== 'boolean') {
+    throw new Error('approved must be boolean');
+  }
+  if (action === 'memory_export' && 'include_sensitive' in payload && typeof payload.include_sensitive !== 'boolean') {
+    throw new Error('include_sensitive must be boolean');
+  }
+  const allowed = new Set(ACTION_PAYLOAD_FIELDS[action] || []);
+  const unexpected = Object.keys(payload).filter((key) => !allowed.has(key)).sort();
+  if (unexpected.length) {
+    throw new Error(`Unsupported payload field for ${action}: ${unexpected.join(', ')}`);
+  }
+}
+
 function buildPlan(action, payload) {
   const spec = ACTIONS[action];
   if (!spec) throw new Error('Unsupported mutation');
+  validateMutationPayload(action, payload);
   return {
     id: crypto.randomUUID(),
     action,
@@ -100,4 +152,14 @@ function buildPlan(action, payload) {
   };
 }
 
-module.exports = { ACTIONS, LAB_KEYS, LAB_PHRASE, READ_ACTIONS, buildPlan, cleanPayload, isLabAction };
+module.exports = {
+  ACTIONS,
+  ACTION_PAYLOAD_FIELDS,
+  LAB_KEYS,
+  LAB_PHRASE,
+  READ_ACTIONS,
+  buildPlan,
+  cleanPayload,
+  isLabAction,
+  validateMutationPayload,
+};

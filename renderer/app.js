@@ -22,8 +22,10 @@ const state = {
   selectedAgencyTable: 'intentions',
   labVisible: false,
   labUnlocked: false,
+  mutationInFlight: false,
   graph: null,
 };
+const reportedErrors = new WeakSet();
 
 const MEMORY_TABLES = [
   ['facts','facts'],['topics','topics'],['episodes','episodes'],['sessions','sessions'],
@@ -79,6 +81,19 @@ function toast(message, kind = 'ok') {
   setTimeout(() => node.remove(), 4200);
 }
 
+function reportError(error, status = 'operation failed') {
+  if (error && typeof error === 'object') {
+    if (reportedErrors.has(error)) return;
+    reportedErrors.add(error);
+  }
+  setStatus(status, 'bad');
+  toast(error?.message || String(error), 'bad');
+}
+
+function runUi(operation) {
+  void Promise.resolve().then(operation).catch((error) => reportError(error));
+}
+
 async function guarded(label, operation) {
   try {
     setStatus(label, 'warn');
@@ -86,9 +101,7 @@ async function guarded(label, operation) {
     setStatus(state.connected ? 'connected' : 'ready', state.connected ? 'ok' : '');
     return result;
   } catch (error) {
-    const message = error?.message || String(error);
-    setStatus('operation failed', 'bad');
-    toast(message, 'bad');
+    reportError(error);
     throw error;
   }
 }
@@ -144,14 +157,25 @@ async function connect() {
 
 async function refreshAll() {
   if (!state.connected) return;
-  const [overview, agency] = await guarded('running health audit', () => Promise.all([
+  setStatus('running health audit', 'warn');
+  const [overview, agency] = await Promise.allSettled([
     api.read('memory_overview', { database: state.database }),
     api.read('agency_snapshot', {}),
-  ]));
-  state.overview = overview;
-  state.agency = agency;
+  ]);
+  state.overview = overview.status === 'fulfilled' ? overview.value : null;
+  state.agency = agency.status === 'fulfilled' ? agency.value : null;
   renderDashboard();
   renderAgencyState();
+  const failures = [];
+  if (overview.status === 'rejected') failures.push(`memory: ${overview.reason?.message || overview.reason}`);
+  if (agency.status === 'rejected') failures.push(`agency: ${agency.reason?.message || agency.reason}`);
+  if (failures.length) {
+    setStatus('connected · degraded', 'warn');
+    toast(`Health refresh incomplete · ${failures.join(' · ')}`, 'bad');
+  } else {
+    setStatus('connected', 'ok');
+  }
+  return { memory: overview.status, agency: agency.status };
 }
 
 function renderDashboard() {
@@ -270,7 +294,11 @@ function renderMemoryEditor(container, title, row, editable, idField, actions = 
       for (const [key, input] of inputs) {
         const original = row[key];
         let value = input.type === 'checkbox' ? input.checked : input.value;
-        if (typeof original === 'number') value = Number(value);
+        if (typeof original === 'number') {
+          if (!input.value.trim()) return toast(`${key} cannot be blank`, 'bad');
+          value = Number(value);
+          if (!Number.isFinite(value)) return toast(`${key} must be a finite number`, 'bad');
+        }
         const normalizedOriginal = ['active','pinned'].includes(key) ? Boolean(Number(original)) : original;
         if (value !== normalizedOriginal) changes[key] = value;
       }
@@ -339,6 +367,15 @@ function renderAgencyState() {
   addKv(heartbeat.body, 'last status', state.agency.heartbeat?.last_status || 'never started');
   addKv(heartbeat.body, 'last reason', state.agency.heartbeat?.last_reason || '—');
   addKv(heartbeat.body, 'runs', state.agency.heartbeat?.runs ?? 0);
+  addKv(heartbeat.body, 'attempts', state.agency.heartbeat?.attempts ?? 0);
+  addKv(heartbeat.body, 'failures', state.agency.heartbeat?.consecutive_failures ?? 0);
+  addKv(heartbeat.body, 'runner', state.agency.heartbeat?.runner?.active ? `active · pid ${state.agency.heartbeat.runner.pid}` : 'stopped');
+  addKv(heartbeat.body, 'run in progress', state.agency.heartbeat?.run_in_progress ? 'yes' : 'no');
+  const pendingWake = state.agency.heartbeat?.pending_wake;
+  addKv(heartbeat.body, 'pending wake', pendingWake?.present ? `${pendingWake.intent || 'event'} · ${Math.round(pendingWake.age_seconds || 0)}s` : 'none');
+  const claimedWake = state.agency.heartbeat?.claimed_wake;
+  addKv(heartbeat.body, 'claimed wake', claimedWake?.present ? `${claimedWake.intent || 'event'} · ${claimedWake.owned_by_run ? 'running' : 'handoff'} · ${Math.round(claimedWake.age_seconds || 0)}s` : 'none');
+  addKv(heartbeat.body, 'delivery state', state.agency.heartbeat?.delivery?.status || '—');
   const heartbeatActions = h('div', { class: 'inspector-actions' },
     h('button', { class: 'button', onclick: () => mutate('agency_heartbeat_run', {}) }, 'wake now'),
     h('button', { class: 'button', onclick: () => mutate('agency_heartbeat_enable', {}) }, 'enable'),
@@ -396,11 +433,20 @@ function settingInput(plugin, item, rerender) {
     for (const choice of item.choices) select.append(h('option', { value: choice, selected: choice === value }, choice));
     return select;
   }
-  const input = h('input', { value: value ?? '', disabled: item.read_only, type: item.type === 'integer' || item.type === 'number' ? 'number' : 'text', step: item.type === 'integer' ? '1' : item.type === 'number' ? 'any' : undefined });
+  const input = h('input', { value: value ?? '', disabled: item.read_only, type: item.type === 'integer' || item.type === 'number' ? 'number' : 'text', step: item.type === 'integer' ? '1' : item.type === 'number' ? 'any' : undefined, min: item.minimum, max: item.maximum });
   input.addEventListener('change', () => {
     let next = input.value;
-    if (item.type === 'integer') next = Number.parseInt(next, 10);
-    if (item.type === 'number') next = Number.parseFloat(next);
+    if (item.type === 'integer' || item.type === 'number') {
+      if (!input.value.trim()) {
+        input.value = String(value ?? '');
+        return toast(`${item.key} cannot be blank`, 'bad');
+      }
+      next = item.type === 'integer' ? Number.parseInt(next, 10) : Number.parseFloat(next);
+      if (!Number.isFinite(next)) {
+        input.value = String(value ?? '');
+        return toast(`${item.key} must be a finite number`, 'bad');
+      }
+    }
     setSetting(plugin, item, next);
     rerender();
   });
@@ -462,8 +508,11 @@ async function loadBackups() {
   replace(container);
   if (!items.length) return container.append(h('div', { class: 'empty' }, 'No controller backups yet.'));
   for (const item of items) {
-    const restore = h('button', { class: 'button danger', onclick: () => mutate(item.kind === 'memory' ? 'memory_restore' : 'agency_restore', item.kind === 'memory' ? { database: state.database, backup_id: item.id } : { backup_id: item.id }) }, 'restore');
-    container.append(h('div', { class: 'backup-item' }, h('strong', {}, item.kind), h('span', {}, new Date(item.modified).toLocaleString()), h('span', {}, `${item.id} · ${formatBytes(item.size)}`), restore));
+    const targetMatches = item.kind !== 'memory' || !item.database || item.database === state.database;
+    const recoverable = (item.legacy === true || item.verified === true) && targetMatches;
+    const status = item.legacy ? 'legacy / integrity checked on restore' : item.verified ? 'manifest verified' : 'manifest invalid';
+    const restore = h('button', { disabled: !recoverable, class: 'button danger', onclick: () => mutate(item.kind === 'memory' ? 'memory_restore' : 'agency_restore', item.kind === 'memory' ? { database: state.database, backup_id: item.id } : { backup_id: item.id }) }, 'restore');
+    container.append(h('div', { class: 'backup-item' }, h('strong', {}, item.kind), h('span', {}, new Date(item.modified).toLocaleString()), h('span', {}, `${item.id} · ${formatBytes(item.size)}`), h('span', {}, targetMatches ? status : `different database (${item.database})`), restore));
   }
 }
 
@@ -522,7 +571,14 @@ function renderContractAudit() {
   if (integration) {
     container.append(
       h('div', { class: 'contract-check' }, h('span', {}, 'integration mode'), h('span', {}, integration.mode || 'unknown')),
-      h('div', { class: 'contract-check' }, h('span', {}, 'main-session continuity'), h('span', { class: integration.main_session_continuity ? 'pass' : 'fail' }, integration.main_session_continuity ? 'active' : 'missing')),
+      h('div', { class: 'contract-check' }, h('span', {}, 'target-session routing'), h('span', { class: integration.target_session_routing ? 'pass' : 'fail' }, integration.target_session_routing ? 'active' : 'missing')),
+      h('div', { class: 'contract-check' }, h('span', {}, 'disposable isolation'), h('span', { class: integration.disposable_session_isolation ? 'pass' : 'fail' }, integration.disposable_session_isolation ? 'active' : 'missing')),
+      h('div', { class: 'contract-check' }, h('span', {}, 'durable wake handoff'), h('span', { class: integration.durable_wake_handoff ? 'pass' : 'fail' }, integration.durable_wake_handoff ? 'active' : 'missing')),
+      h('div', { class: 'contract-check' }, h('span', {}, 'claimed-wake recovery'), h('span', { class: integration.claimed_wake_recovery ? 'pass' : 'fail' }, integration.claimed_wake_recovery ? 'active' : 'missing')),
+      h('div', { class: 'contract-check' }, h('span', {}, 'runner process lock'), h('span', { class: integration.runner_process_lock ? 'pass' : 'fail' }, integration.runner_process_lock ? 'active' : 'missing')),
+      h('div', { class: 'contract-check' }, h('span', {}, 'ambiguous-send tracking'), h('span', { class: integration.ambiguous_delivery_tracking ? 'pass' : 'fail' }, integration.ambiguous_delivery_tracking ? 'active' : 'missing')),
+      h('div', { class: 'contract-check' }, h('span', {}, 'decision delivery ledger'), h('span', { class: integration.decision_delivery_ledger ? 'pass' : 'fail' }, integration.decision_delivery_ledger ? 'active' : 'missing')),
+      h('div', { class: 'contract-check' }, h('span', {}, 'heartbeat memory isolation'), h('span', { class: integration.memory_session_isolation ? 'pass' : 'fail' }, integration.memory_session_isolation ? 'active' : 'missing')),
       h('div', { class: 'contract-check' }, h('span', {}, 'buffered delivery'), h('span', { class: integration.buffered_delivery ? 'pass' : 'fail' }, integration.buffered_delivery ? 'active' : 'missing')),
       h('div', { class: 'contract-check' }, h('span', {}, 'cron independent'), h('span', { class: integration.cron_independent ? 'pass' : 'fail' }, integration.cron_independent ? 'yes' : 'no')),
     );
@@ -574,33 +630,82 @@ function confirmPlan(plan) {
 
 async function mutate(action, payload) {
   if (!state.connected) return toast('Connect to Hermes first', 'bad');
+  if (state.mutationInFlight) return toast('Another confirmed action is still running', 'bad');
+  state.mutationInFlight = true;
   try {
-    const plan = await guarded('building action preview', () => api.preview(action, payload));
-    const phrase = await confirmPlan(plan);
-    if (!phrase) { setStatus('action cancelled', 'ok'); return null; }
-    const result = await guarded('committing audited action', () => api.commit(plan.id, phrase));
-    toast(`${plan.title} completed · audit ${result.audit?.hash?.slice(0, 10) || 'recorded'}`);
-    if (['memory_update_item','memory_deactivate_fact','memory_resolve_approval','memory_resolve_intention'].includes(action)) await loadMemoryTable();
-    if (action.startsWith('agency_') && !action.includes('backup')) { await refreshAll(); await loadAgencyTable(); }
-    if (action.includes('backup') || action.includes('restore')) await loadBackups();
-    if (action === 'config_apply' || action === 'lab_apply_profile') { state.schema = null; state.probe = await api.read('probe', {}); await ensureSchema(); await refreshAll(); }
-    return result;
-  } catch {
-    return null;
+    return await performMutation(action, payload);
+  } finally {
+    state.mutationInFlight = false;
   }
 }
 
+async function performMutation(action, payload) {
+  let plan;
+  let result;
+  try {
+    plan = await guarded('building action preview', () => api.preview(action, payload));
+    const phrase = await confirmPlan(plan);
+    if (!phrase) { setStatus('action cancelled', 'ok'); return null; }
+    result = await guarded('committing audited action', () => api.commit(plan.id, phrase));
+  } catch {
+    return null;
+  }
+  toast(`${plan.title} completed · audit ${result.audit?.hash?.slice(0, 10) || 'recorded'}`);
+
+  // The mutation is already committed. Refresh failures must not recast a
+  // successful audited write as a failed or ambiguous mutation.
+  const refreshFailures = [];
+  const refreshStep = async (label, operation) => {
+    try { await operation(); }
+    catch (error) { refreshFailures.push(`${label}: ${error?.message || error}`); }
+  };
+  await refreshStep('probe', async () => {
+    try {
+      state.probe = await api.read('probe', {});
+    } catch (error) {
+      state.probe = null;
+      renderContractAudit();
+      throw error;
+    }
+    renderContractAudit();
+  });
+  if (action === 'config_apply' || action === 'lab_apply_profile') {
+    state.schema = null;
+    await refreshStep('configuration schema', ensureSchema);
+  }
+  const health = await refreshAll();
+  if (health?.memory === 'rejected') refreshFailures.push('memory health unavailable');
+  if (health?.agency === 'rejected') refreshFailures.push('agency health unavailable');
+  if (['memory_update_item','memory_deactivate_fact','memory_resolve_approval','memory_resolve_intention'].includes(action)) {
+    await refreshStep('memory table', loadMemoryTable);
+  }
+  if (action.startsWith('agency_') && !action.includes('backup')) {
+    await refreshStep('agency table', loadAgencyTable);
+  }
+  if (action.includes('backup') || action.includes('restore')) {
+    await refreshStep('backup inventory', loadBackups);
+  }
+  if (refreshFailures.length) {
+    setStatus('action completed · refresh degraded', 'warn');
+    toast(`Action succeeded; refresh incomplete · ${refreshFailures.join(' · ')}`, 'bad');
+  }
+  return result;
+}
+
 function switchView(name) {
+  if (!state.connected && name !== 'dashboard' && name !== 'lab') {
+    toast('Connect to Hermes from Overview first', 'bad');
+    return;
+  }
   $$('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.view === name));
   $$('.view').forEach((item) => item.classList.toggle('active', item.id === `view-${name}`));
-  if (!state.connected && name !== 'dashboard' && name !== 'lab') return toast('Connect to Hermes from Overview first', 'bad');
-  if (name === 'memory') void loadMemoryTable();
-  if (name === 'agency') { renderAgencyState(); void loadAgencyTable(); }
-  if (name === 'graph') void loadGraph();
-  if (name === 'config') void ensureSchema();
-  if (name === 'backups') void loadBackups();
-  if (name === 'audit') void loadAudit();
-  if (name === 'wiki') void loadWiki();
+  if (name === 'memory') runUi(loadMemoryTable);
+  if (name === 'agency') { renderAgencyState(); runUi(loadAgencyTable); }
+  if (name === 'graph') runUi(loadGraph);
+  if (name === 'config') runUi(ensureSchema);
+  if (name === 'backups') runUi(loadBackups);
+  if (name === 'audit') runUi(loadAudit);
+  if (name === 'wiki') runUi(loadWiki);
 }
 
 function setup() {
@@ -608,12 +713,12 @@ function setup() {
   $('#win-max').addEventListener('click', () => api.maximize());
   $('#win-close').addEventListener('click', () => api.close());
   $$('.nav-item').forEach((item) => item.addEventListener('click', () => switchView(item.dataset.view)));
-  $('#connect-button').addEventListener('click', connect);
-  $('#refresh-button').addEventListener('click', refreshAll);
-  $('#database-select').addEventListener('change', async () => { state.database = $('#database-select').value; await refreshAll(); });
+  $('#connect-button').addEventListener('click', () => runUi(connect));
+  $('#refresh-button').addEventListener('click', () => runUi(refreshAll));
+  $('#database-select').addEventListener('change', () => runUi(async () => { state.database = $('#database-select').value; await refreshAll(); }));
   fillOptions($('#memory-table'), MEMORY_TABLES); fillOptions($('#agency-table'), AGENCY_TABLES);
-  $('#memory-load').addEventListener('click', loadMemoryTable); $('#memory-query').addEventListener('keydown', (event) => { if (event.key === 'Enter') void loadMemoryTable(); });
-  $('#agency-load').addEventListener('click', loadAgencyTable); $('#agency-query').addEventListener('keydown', (event) => { if (event.key === 'Enter') void loadAgencyTable(); });
+  $('#memory-load').addEventListener('click', () => runUi(loadMemoryTable)); $('#memory-query').addEventListener('keydown', (event) => { if (event.key === 'Enter') runUi(loadMemoryTable); });
+  $('#agency-load').addEventListener('click', () => runUi(loadAgencyTable)); $('#agency-query').addEventListener('keydown', (event) => { if (event.key === 'Enter') runUi(loadAgencyTable); });
   $('#memory-backup').addEventListener('click', () => mutate('memory_backup', { database: state.database }));
   $('#memory-export').addEventListener('click', () => mutate('memory_export', { database: state.database, include_sensitive: false }));
   $('#memory-retry').addEventListener('click', () => mutate('memory_retry_failed', { database: state.database, limit: 100 }));
@@ -625,18 +730,18 @@ function setup() {
   $('#agency-add').addEventListener('click', () => { const title = window.prompt('New intention:'); if (title) void mutate('agency_add_intention', { title, priority: 50, autonomy: 'propose' }); });
   $('#agency-question').addEventListener('click', () => { const question = window.prompt('New unresolved question:'); if (question) void mutate('agency_add_question', { question }); });
   $('#agency-observation').addEventListener('click', () => { const observation = window.prompt('New inspectable self-observation:'); if (observation) void mutate('agency_add_observation', { observation }); });
-  $('#graph-load').addEventListener('click', loadGraph); $('#graph-reset').addEventListener('click', () => state.graph?.reset());
+  $('#graph-load').addEventListener('click', () => runUi(loadGraph)); $('#graph-reset').addEventListener('click', () => state.graph?.reset());
   $$('[data-config-plugin]').forEach((button) => button.addEventListener('click', () => { state.configPlugin = button.dataset.configPlugin; $$('[data-config-plugin]').forEach((item) => item.classList.toggle('active', item === button)); renderConfig(); }));
   $('#config-filter').addEventListener('input', renderConfig); $('#config-apply').addEventListener('click', () => applyConfig());
-  $('#backup-memory').addEventListener('click', () => mutate('memory_backup', { database: state.database })); $('#backup-agency').addEventListener('click', () => mutate('agency_backup', {})); $('#backups-load').addEventListener('click', loadBackups);
-  $('#audit-load').addEventListener('click', loadAudit);
-  $('#lab-unlock').addEventListener('click', unlockLab);
+  $('#backup-memory').addEventListener('click', () => mutate('memory_backup', { database: state.database })); $('#backup-agency').addEventListener('click', () => mutate('agency_backup', {})); $('#backups-load').addEventListener('click', () => runUi(loadBackups));
+  $('#audit-load').addEventListener('click', () => runUi(loadAudit));
+  $('#lab-unlock').addEventListener('click', () => runUi(unlockLab));
   $('#lab-unrestricted').addEventListener('click', () => mutate('lab_apply_profile', { profile: 'unrestricted_research' }));
   $('#lab-export-sensitive').addEventListener('click', () => mutate('memory_export', { database: state.database, include_sensitive: true }));
   $('#lab-recommended').addEventListener('click', () => mutate('lab_apply_profile', { profile: 'recommended' }));
   let clicks = 0, clickTimer;
-  $('#version-trigger').addEventListener('click', () => { clicks += 1; clearTimeout(clickTimer); clickTimer = setTimeout(() => { clicks = 0; }, 4000); if (clicks >= 7) { clicks = 0; void revealLab(); } });
-  document.addEventListener('keydown', (event) => { if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'l') void revealLab(); });
+  $('#version-trigger').addEventListener('click', () => { clicks += 1; clearTimeout(clickTimer); clickTimer = setTimeout(() => { clicks = 0; }, 4000); if (clicks >= 7) { clicks = 0; runUi(revealLab); } });
+  document.addEventListener('keydown', (event) => { if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'l') runUi(revealLab); });
   const savedTheme = localStorage.getItem('hmc-theme') || 'gruvbox';
   document.documentElement.dataset.theme = savedTheme; $('#theme-select').value = savedTheme;
   $('#theme-select').addEventListener('change', () => { document.documentElement.dataset.theme = $('#theme-select').value; localStorage.setItem('hmc-theme', $('#theme-select').value); });
@@ -644,4 +749,4 @@ function setup() {
 }
 
 setup();
-void loadProfiles();
+runUi(loadProfiles);

@@ -1,6 +1,6 @@
 {
   "name": "hermes-memory-control",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "Fail-safe desktop audit and control center for Hermes memory and conscious agency.",
   "main": "main.js",
   "author": "b7216309-jpg",
@@ -19,7 +19,7 @@
     "test:bridge": "python -m unittest discover -s tests -p test_*.py",
     "test:wsl": "node scripts/wsl-smoke.js",
     "test:electron": "npm run build && electron . --smoke-test",
-    "test:all": "npm test && npm run test:bridge && npm run test:wsl",
+    "test:all": "npm test && npm run test:bridge && npm run test:wsl && npm run test:electron",
     "ui:serve": "npm run build && node scripts/ui-server.js"
   },
   "dependencies": {

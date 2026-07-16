@@ -3,6 +3,16 @@
 const assert = require('node:assert/strict');
 const { discoverProfiles, runBridge } = require('../src/main/bridge');
 
+async function mutate(profile, action, payload) {
+  const preflight = await runBridge(profile, 'mutation_preflight', { action, payload });
+  return runBridge(
+    profile,
+    action,
+    { ...payload, _preflight_token: preflight.token },
+    { mutation: true },
+  );
+}
+
 async function main() {
   const profiles = await discoverProfiles();
   assert(profiles.length > 0, 'No WSL profile was discovered');
@@ -15,7 +25,17 @@ async function main() {
   assert.equal(probe.agency.runtime.contract.source_support, true);
   assert.equal(probe.agency.runtime.contract.legacy_cron.found, false);
   assert.equal(probe.agency.runtime.contract.integration.mode, 'gateway_native_heartbeat');
-  assert.equal(probe.agency.runtime.contract.integration.main_session_continuity, true);
+  assert.equal(probe.agency.runtime.contract.integration.target_session_routing, true);
+  assert.equal(probe.agency.runtime.contract.integration.disposable_session_isolation, true);
+  assert.equal(probe.agency.runtime.contract.integration.non_delivery_work_route, true);
+  assert.equal(probe.agency.runtime.contract.integration.reserved_session_pin_absent, true);
+  assert.equal(probe.agency.runtime.contract.integration.stale_session_reconciliation, true);
+  assert.equal(probe.agency.runtime.contract.integration.durable_wake_handoff, true);
+  assert.equal(probe.agency.runtime.contract.integration.claimed_wake_recovery, true);
+  assert.equal(probe.agency.runtime.contract.integration.runner_process_lock, true);
+  assert.equal(probe.agency.runtime.contract.integration.ambiguous_delivery_tracking, true);
+  assert.equal(probe.agency.runtime.contract.integration.decision_delivery_ledger, true);
+  assert.equal(probe.agency.runtime.contract.integration.memory_session_isolation, true);
   const database = probe.memory.databases.find((item) => item.exists)?.id;
   assert(database, 'No memory database exists');
   const overview = await runBridge(profile, 'memory_overview', { database });
@@ -44,8 +64,8 @@ async function main() {
   assert(schema.agency.length > 10);
   await runBridge(profile, 'wiki_list', {});
   if (process.env.HMC_MUTATION_SMOKE === '1') {
-    await runBridge(profile, 'memory_backup', { database }, { mutation: true });
-    await runBridge(profile, 'agency_backup', {}, { mutation: true });
+    await mutate(profile, 'memory_backup', { database });
+    await mutate(profile, 'agency_backup', {});
     const audit = await runBridge(profile, 'audit_list', { limit: 10 });
     assert.equal(audit.valid, true);
     assert(audit.events.some((item) => item.operation === 'memory_backup'));

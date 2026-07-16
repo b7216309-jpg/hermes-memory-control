@@ -5,9 +5,10 @@ A local Windows/Electron audit and control surface for the Hermes suite:
 - [Hermes Consolidating Local Memory](https://github.com/b7216309-jpg/hermes-consolidating-local-memory)
 - [Hermes Conscious Agency](https://github.com/b7216309-jpg/hermes-conscious-agency)
 
-Version 3.0 supports Memory 3.4 and Conscious Agency 1.0's gateway-native heartbeat. It replaces
-the retired Agency-cron controls with heartbeat status, wake, enable, disable, migration, and
-integration audit while preserving every unrelated Hermes cron job.
+Version 3.1 supports Memory 3.5 and Conscious Agency 1.1's gateway-native heartbeat. It audits
+disposable-session cleanup, Memory isolation, claimed-wake recovery, process ownership, and
+at-most-once delivery in addition to status, wake, enable, disable, migration, and preservation of
+every unrelated Hermes cron job.
 
 ![Anonymous dashboard](screenshots/dashboard-anonymous.png)
 
@@ -42,7 +43,7 @@ raw process access. Every write is selected from a fixed operation list in the W
 
 ## Native heartbeat controls
 
-Conscious Agency 1.0 no longer owns a Hermes cron job. Control Center exposes:
+Conscious Agency 1.1 no longer owns a Hermes cron job. Control Center exposes:
 
 - current enablement, interval, target, active hours, next due time, last status/reason, and run
   count;
@@ -51,8 +52,10 @@ Conscious Agency 1.0 no longer owns a Hermes cron job. Control Center exposes:
   already running;
 - **Remove legacy cron**, which first backs up Agency state, then asks the plugin to remove only the
   cron ID recorded in its own database and migrate retired config keys;
-- a source/runtime audit for main-session continuity, buffered delivery, structured response,
-  guardrail state, and cron independence.
+- a source/runtime audit for target-session routing, disposable-session cleanup, stale-session
+  reconciliation, Memory isolation, a non-delivery model-work route, absence of Hermes' reserved
+  async-delegation session pin, claimed-wake recovery, the runner process lease, delivery outcomes,
+  structured response, guardrail state, and cron independence.
 
 ```mermaid
 flowchart LR
@@ -75,13 +78,17 @@ Every mutation follows a preview/confirm/execute flow:
 
 1. The main process builds a short-lived plan from a fixed action contract.
 2. The UI shows scope, risk, and the exact confirmation phrase.
-3. The bridge validates all IDs, types, ranges, paths, URLs, time values, and plugin config.
+3. Electron and the bridge reject undeclared payload fields, then validate every ID, type, range,
+   path, URL, time value, and plugin setting.
 4. Database/config mutations create a verified protected backup first where applicable.
 5. Config writes use a temporary file plus atomic replacement.
 6. A running gateway is restarted only when activation requires it; a stopped gateway stays
    stopped.
 7. Activation failure restores the previous config and original gateway state.
-8. The result is appended to a hash-chained JSONL audit with sensitive text hashed or redacted.
+8. Execution revalidates a short-lived token bound to the exact payload, config, database/WAL,
+   bridge source, and installed plugin implementation files.
+9. A cross-process lease prevents overlapping mutations from two Control Center instances.
+10. The result is appended to a hash-chained JSONL audit with sensitive text hashed or redacted.
 
 Additional boundaries:
 
@@ -89,6 +96,8 @@ Additional boundaries:
 - A narrow `contextBridge` API rather than raw IPC exposure.
 - WSL launched with an argument array, never a composed shell command.
 - Fixed database/table/field allowlists and controller-owned backup identifiers.
+- Read views open plugin stores in SQLite/SQLCipher read-only and `query_only` mode; connecting and
+  browsing cannot initialize a schema or update recall metadata.
 - SQLCipher-aware backup and restore; no plaintext conversion is performed implicitly.
 - Config and database encryption modes cannot be toggled in place.
 - No secrets or database contents are logged into the public audit chain.
@@ -170,12 +179,13 @@ are read-only in the generic editor.
 The heartbeat fields include:
 
 - enablement, interval, delivery target, active hours, timeout and busy deferral;
-- a heartbeat-only tool-iteration limit, without changing normal chats or model output length;
 - acknowledgement threshold, minimum event spacing, and flood window/threshold;
 - optional local no-thinking hint (leave it off when heartbeat reasoning is wanted);
 - conservative policy gates and Educational Lab overrides.
 
-Unknown or retired Agency cron keys are not presented by Control Center 3.0.
+There is no plugin token, iteration, tool-call, or output-length setting. The timeout is a
+wall-clock failure boundary for a dead turn, not a generation budget. Unknown or retired Agency
+cron/iteration keys are not presented by Control Center 3.1.
 
 ## Test
 
@@ -192,10 +202,11 @@ Or run the standard aggregate suite:
 npm run test:all
 ```
 
-Coverage includes payload sanitization, plan allowlists, Lab gating, renderer isolation, CSP, WSL
-argument safety, privacy markers, synthetic screenshots, audit-chain tamper detection, config
-rollback, encrypted backup rules, temporal-memory invariants, native-heartbeat actions, and exact
-legacy-cron scoping.
+Coverage includes payload sanitization, exact per-action contracts, preflight source/database
+fingerprints, cross-process mutation exclusion, Lab gating, renderer isolation, CSP, WSL argument
+safety, privacy markers, synthetic screenshots, audit-chain tamper detection, config rollback,
+encrypted backup/restore rules, temporal-memory invariants, native-heartbeat lifecycle contracts,
+Memory isolation, and exact legacy-cron scoping.
 
 ## Data locations
 
@@ -206,15 +217,20 @@ Control Center stores operator artifacts inside the selected Hermes home:
 ~/.hermes/control-center/backups/
 ~/.hermes/control-center/config-backups/
 ~/.hermes/control-center/exports/
+~/.hermes/control-center/mutation.lock
 ```
 
 Directories are restricted to the owning WSL user where supported. The application does not upload
 telemetry, memory, Agency state, screenshots, or audit data.
 
+The audit is tamper-evident, not externally authenticated. A user who can replace both the app and
+the audit file can recompute the chain; [SECURITY.md](SECURITY.md) describes external anchoring for
+stronger assurance.
+
 ## Troubleshooting
 
 - **No profile found:** start the WSL distribution once and confirm `~/.hermes/config.yaml` exists.
-- **Connect fails after an Agency update:** install Conscious Agency 1.0 in the same Hermes home,
+- **Connect fails after an Agency update:** install Conscious Agency 1.1 and Memory 3.5 in the same Hermes home,
   restart the gateway, then reconnect.
 - **Audit reports `legacy_cron_present`:** use **Agency → remove legacy cron**. The action is scoped
   to the ID recorded by Agency and leaves other jobs unchanged.

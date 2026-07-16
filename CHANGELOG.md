@@ -1,5 +1,28 @@
 # Changelog
 
+## 3.1.0 — 2026-07-17
+
+- Added complete Memory 3.5 and Conscious Agency 1.1 contract coverage, including disposable
+  session cleanup, stale-session reconciliation, claimed-wake recovery, the runner process lease,
+  decision-delivery outcomes, and heartbeat-to-Memory isolation.
+- Audited the heartbeat's adapter-free model-work route and rejected the reserved Hermes
+  `gateway_session_id` pin that can silently drop or misroute a synthetic turn.
+- Made all database browsing use the plugins' read-only store modes so connecting or inspecting
+  cannot migrate or modify encrypted state.
+- Made database edits transactional with history, FTS, topic, and reference repair in the same
+  commit.
+- Added manifest-bound encrypted backups, retention, digest verification, rollback-protected
+  restores, and combined restore/restart failure diagnostics.
+- Bound each confirmation token to the exact payload, current config/database/WAL state, Control
+  bridge implementation, and installed Memory/Agency implementation files; undeclared payload
+  fields are rejected in both Electron and the WSL bridge.
+- Added a cross-process mutation lease so two Control Center instances cannot mutate the suite at
+  the same time.
+- Hardened the append-only audit with cross-process locking and text hashing, and expanded WSL,
+  Electron, renderer, privacy, rollback, and concurrency tests.
+- Removed every retired heartbeat iteration control while preserving an uncapped model/tool path
+  and the independent 600-second wall-clock timeout.
+
 ## 3.0.0 — 2026-07-16
 
 - Replaced every obsolete Agency-cron action with native heartbeat status, manual wake,

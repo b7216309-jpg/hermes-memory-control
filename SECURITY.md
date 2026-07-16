@@ -27,6 +27,10 @@ payloads from becoming arbitrary code execution or silent state corruption.
    flushed and atomically replaced.
 9. Wiki HTML is sanitized and links are made inert before insertion into the DOM.
 10. Encryption mode cannot be toggled as a YAML-only change.
+11. A payload cannot contain fields outside its operation contract.
+12. Confirmation is invalidated when the exact payload, config, target database/WAL, bridge source,
+    or installed Memory/Agency implementation changes after preview.
+13. A process-wide plus OS-level lease permits only one mutation at a time for a Hermes home.
 
 Audit records hash sensitive text fields instead of duplicating memory, prompts, observations or
 messages. Failed mutation attempts are recorded too when the audit directory remains available.
@@ -44,11 +48,13 @@ The Lab is hidden to reduce accidental discovery, but hiding is not authorizatio
 process independently enforces its unlock phrase and expiry. Lab operations still use backups,
 confirmation phrases, validation and audit.
 
-The controller never patches plugin source. Conscious Agency 0.5 exposes strict default-off Lab
-settings for claim-contract, gate, tool-isolation, mutation-limit and output-filter research. The
-controller compares those settings with the prompt actually stored in Hermes cron, then refreshes
-the job and restarts a running gateway with rollback protection. These overrides affect only the
-plugin; Hermes, provider, platform and OS permissions remain outside the controller's authority.
+The controller never patches plugin source. Conscious Agency 1.1 exposes strict default-off Lab
+settings for the claim contract, proactive gates, heartbeat tool isolation, state-mutation limits,
+output enforcement, and longitudinal subjectivity research. The controller validates installed
+source capabilities and effective native-heartbeat runtime state, then restarts a running gateway
+with rollback protection when activation is required. There is no Agency-owned cron prompt to
+refresh. These overrides affect only the plugin; Hermes, provider, platform and OS permissions
+remain outside the controller's authority.
 
 ## Reporting
 

@@ -309,9 +309,8 @@ function renderAgencyState() {
   for (const question of snapshot.workspace?.questions || []) {
     focus.body.append(h('div', { class: 'health-line' }, h('span', {}, short(question.question, 120)), h('button', { class: 'button', onclick: () => mutate('agency_resolve_question', { id: question.id }) }, 'resolve')));
   }
-  const hasStateMetrics = Boolean(snapshot.state_metrics);
-  const metrics = snapshot.state_metrics || snapshot.control_signals || {};
-  const signals = panel(hasStateMetrics ? 'state metrics' : 'legacy control signals', 'amber');
+  const metrics = snapshot.state_metrics || {};
+  const signals = panel('state metrics', 'amber');
   for (const [key, value] of Object.entries(metrics)) {
     let rendered = '—';
     if (value !== null && value !== undefined) {

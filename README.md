@@ -13,10 +13,10 @@ Version 2 is an in-place security rewrite of the original Hermes Memory Control 
 compact terminal/Gruvbox visual language while removing the privileged renderer, raw SQL bridge,
 shell command construction, static temporary files, and old-schema assumptions.
 
-Version 2.3.1 supports Conscious Agency 0.5's state-first cold and continuity conditions. It shows
-factual state metrics, understands protocol 1.4's source-separated continuity chains, and keeps a
-legacy display fallback for older Agency snapshots. The encrypted longitudinal journal remains
-browsable without creating a second runtime or delivery path.
+Version 2.3.2 supports Conscious Agency 0.5's state-first cold and continuity conditions. It shows
+factual state metrics and understands protocol 1.4's source-separated continuity chains. The
+encrypted longitudinal journal remains browsable without creating a second runtime or delivery
+path. The obsolete pre-0.5 `control_signals` display path has been removed.
 
 ![Hermes Control Center overview using synthetic demo data](screenshots/dashboard-anonymous.png)
 
@@ -51,8 +51,8 @@ browsable without creating a second runtime or delivery path.
 The real integration suite currently covers:
 
 - Hermes Agent `0.18.2`;
-- Consolidating Local Memory `3.3.1`;
-- Conscious Agency `0.5.0`;
+- Consolidating Local Memory `3.3.2`;
+- Conscious Agency `0.5.1`;
 - encrypted base and user-scoped databases;
 - Electron `43`.
 
@@ -388,7 +388,7 @@ An incompatible table stays inaccessible rather than falling back to raw SQLite 
 The cron job contains an older prompt snapshot than the installed plugin would generate. Use
 **Agency → install/update cron**, or reapply the desired Lab/recommended profile. Version 2.2
 refreshes the prompt automatically whenever agency configuration is changed through the controller.
-Control Center 2.3.1 additionally displays Conscious Agency 0.5's factual state metrics and audits
+Control Center 2.3.2 displays Conscious Agency 0.5's factual state metrics and audits
 the configured subjectivity condition and refreshed prompt hash.
 
 ### Agency policy shows `unsupported_plugin_version`
@@ -396,8 +396,7 @@ the configured subjectivity condition and refreshed prompt hash.
 Install Conscious Agency 0.5 or newer. Older source-patched builds do not expose the current,
 auditable Educational Lab controls required for safe/reversible profile changes.
 The state-first protocol 1.4 context and source-separated continuity require Conscious Agency 0.5
-or newer. Control Center retains a read-only display fallback for legacy `control_signals`
-snapshots during upgrades.
+or newer. Pre-0.5 `control_signals` snapshots are intentionally unsupported.
 
 ## License
 

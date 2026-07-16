@@ -309,8 +309,19 @@ function renderAgencyState() {
   for (const question of snapshot.workspace?.questions || []) {
     focus.body.append(h('div', { class: 'health-line' }, h('span', {}, short(question.question, 120)), h('button', { class: 'button', onclick: () => mutate('agency_resolve_question', { id: question.id }) }, 'resolve')));
   }
-  const signals = panel('control signals', 'amber');
-  for (const [key, value] of Object.entries(snapshot.control_signals || {})) addKv(signals.body, key, Number(value).toFixed(2));
+  const hasStateMetrics = Boolean(snapshot.state_metrics);
+  const metrics = snapshot.state_metrics || snapshot.control_signals || {};
+  const signals = panel(hasStateMetrics ? 'state metrics' : 'legacy control signals', 'amber');
+  for (const [key, value] of Object.entries(metrics)) {
+    let rendered = '—';
+    if (value !== null && value !== undefined) {
+      const numeric = Number(value);
+      rendered = Number.isInteger(numeric) && !key.endsWith('_ratio')
+        ? String(numeric)
+        : numeric.toFixed(2);
+    }
+    addKv(signals.body, key, rendered);
+  }
   const subjective = panel('subjective experiment', snapshot.subjective?.mode === 'off' ? 'amber' : 'red');
   addKv(subjective.body, 'mode', snapshot.subjective?.mode || 'off');
   addKv(subjective.body, 'protocol', snapshot.subjective?.protocol_version || '—');

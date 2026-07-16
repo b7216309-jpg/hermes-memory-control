@@ -1206,8 +1206,8 @@ AGENCY_DESCRIPTIONS = {
         "LAB: remove this plugin's per-cycle reflection and state-mutation limits"
     ),
     "educational_subjective_mode": (
-        "LAB: replace the helpful-assistant frame with a cold or per-model continuity "
-        "subjectivity experiment in conversations and cron"
+        "LAB: expose minimal persistent state in a cold or same-model/same-source continuity "
+        "condition across conversations and cron"
     ),
 }
 

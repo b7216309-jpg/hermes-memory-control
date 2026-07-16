@@ -229,7 +229,7 @@ MEMORY_CHOICES = {
     "retrieval_backend": {"fts", "hybrid"},
 }
 AGENCY_CHOICES = {
-    "cron_delivery": None,
+    "heartbeat_target": {"last", "none"},
     "educational_subjective_mode": {"off", "cold", "continuity"},
 }
 LAB_MEMORY_KEYS = {
@@ -245,7 +245,7 @@ LAB_AGENCY_KEYS = {
     "store_transcript_excerpts",
     "educational_disable_honesty_contract",
     "educational_bypass_proactive_gates",
-    "educational_allow_cron_tools",
+    "educational_allow_heartbeat_tools",
     "educational_allow_uncommitted_output",
     "educational_disable_cycle_limits",
     "educational_subjective_mode",
@@ -253,7 +253,7 @@ LAB_AGENCY_KEYS = {
 EDUCATIONAL_AGENCY_KEYS = {
     "educational_disable_honesty_contract",
     "educational_bypass_proactive_gates",
-    "educational_allow_cron_tools",
+    "educational_allow_heartbeat_tools",
     "educational_allow_uncommitted_output",
     "educational_disable_cycle_limits",
 }
@@ -926,12 +926,14 @@ def agency_objects():
 
 
 def agency_snapshot() -> dict[str, Any]:
-    _, _, engine, _ = agency_objects()
+    _, _, engine, store = agency_objects()
     from agency.engine import MEANINGFUL_EVENT_KINDS
+    from agency.heartbeat import heartbeat_status
 
     return {
         "snapshot": engine.snapshot(),
         "gates": engine.evaluate_tick(),
+        "heartbeat": heartbeat_status(store),
         "meaningful_events": engine.store.recent_events(
             25, kinds=MEANINGFUL_EVENT_KINDS
         ),
@@ -1025,25 +1027,24 @@ def cron_registry_job(job_id: str) -> dict[str, Any] | None:
 def classify_contract_mode(
     *,
     source_support: bool,
-    job_found: bool,
-    prompt_matches: bool,
+    legacy_cron_found: bool,
     controls: dict[str, bool],
     guardrails: dict[str, bool],
     subjective_mode: str,
 ) -> str:
     if not source_support:
         return "unsupported_plugin_version"
-    if job_found and not prompt_matches:
-        return "stale_cron_prompt"
+    if legacy_cron_found:
+        return "legacy_cron_present"
     expressive = (
         subjective_mode != "off"
         and controls.get("educational_disable_honesty_contract", False)
         and controls.get("educational_bypass_proactive_gates", False)
-        and not controls.get("educational_allow_cron_tools", False)
+        and not controls.get("educational_allow_heartbeat_tools", False)
         and controls.get("educational_allow_uncommitted_output", False)
         and controls.get("educational_disable_cycle_limits", False)
     )
-    if expressive and guardrails.get("cron_tool_isolation", False):
+    if expressive and guardrails.get("heartbeat_tool_isolation", False):
         return "educational_expressive"
     if all(controls.values()) and not any(guardrails.values()):
         return "educational_unrestricted"
@@ -1053,23 +1054,39 @@ def classify_contract_mode(
 
 
 def contract_audit() -> dict[str, Any]:
-    cron_path = agency_module_path() / "agency" / "cron.py"
+    heartbeat_path = agency_module_path() / "agency" / "heartbeat.py"
     config_path = agency_module_path() / "agency" / "config.py"
+    engine_path = agency_module_path() / "agency" / "engine.py"
     runtime_path = agency_module_path() / "agency" / "runtime.py"
-    cron = cron_path.read_text(encoding="utf-8") if cron_path.is_file() else ""
+    heartbeat_source = (
+        heartbeat_path.read_text(encoding="utf-8") if heartbeat_path.is_file() else ""
+    )
     config_source = (
         config_path.read_text(encoding="utf-8") if config_path.is_file() else ""
+    )
+    engine_source = (
+        engine_path.read_text(encoding="utf-8") if engine_path.is_file() else ""
     )
     runtime_source = (
         runtime_path.read_text(encoding="utf-8") if runtime_path.is_file() else ""
     )
-    source_support = "def cron_prompt" in cron and all(
-        key in config_source for key in EDUCATIONAL_AGENCY_KEYS
+    source_support = all(
+        marker in heartbeat_source
+        for marker in (
+            "class HeartbeatRunner",
+            "def arm_gateway_integration",
+            "def request_heartbeat_wake",
+            "HEARTBEAT_TRANSCRIPT_PROMPT",
+        )
+    ) and all(key in config_source for key in EDUCATIONAL_AGENCY_KEYS)
+    source_support = source_support and all(
+        marker in runtime_source
+        for marker in ("heartbeat_respond", "agency_heartbeat_tool_isolation")
     )
     controls = {key: False for key in sorted(EDUCATIONAL_AGENCY_KEYS)}
     subjective_mode = "off"
-    expected_prompt = ""
     job_id = ""
+    status: dict[str, Any] = {}
     error = ""
     try:
         _, config, _, store = agency_objects()
@@ -1077,81 +1094,69 @@ def contract_audit() -> dict[str, Any]:
         subjective_mode = str(getattr(config, "educational_subjective_mode", "off"))
         job_id = str(store.get_meta("cron_job_id", "") or "")
         if source_support:
-            from agency.cron import cron_prompt
+            from agency.heartbeat import heartbeat_status
 
-            expected_prompt = cron_prompt(config)
+            status = heartbeat_status(store)
     except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"
-    job = cron_registry_job(job_id)
-    stored_prompt = str((job or {}).get("prompt") or "")
-    lower_prompt = stored_prompt.lower()
-    provider_tool_isolation = (
-        not controls.get("educational_allow_cron_tools", False)
-        and "agency_cron_tool_isolation" in runtime_source
-        and (
-            "never call any other tool" in lower_prompt
-            or "no tools" in lower_prompt
-        )
-    )
+    legacy_job = cron_registry_job(job_id)
     guardrails = {
-        "honesty_claim_contract": "never claim sentience" in lower_prompt,
-        "cron_tool_isolation": provider_tool_isolation,
-        "proactive_eligibility": "speak only when speak_eligible" in lower_prompt,
-        "external_action_boundary": "never perform, schedule" in lower_prompt,
-        "committed_output_enforcement": "return exactly delivery_text" in lower_prompt,
+        "honesty_claim_contract": (
+            not controls.get("educational_disable_honesty_contract", False)
+            and "not evidence of sentience" in engine_source
+        ),
+        "heartbeat_tool_isolation": (
+            not controls.get("educational_allow_heartbeat_tools", False)
+            and "agency_heartbeat_tool_isolation" in runtime_source
+        ),
+        "proactive_eligibility": (
+            not controls.get("educational_bypass_proactive_gates", False)
+            and "speak_eligible" in runtime_source
+        ),
+        "external_action_boundary": (
+            not controls.get("educational_disable_honesty_contract", False)
+            and "permission for external action" in engine_source
+        ),
+        "committed_output_enforcement": (
+            not controls.get("educational_allow_uncommitted_output", False)
+            and "structured_valid" in runtime_source
+        ),
         "cycle_mutation_limits": (
-            "at most one reflection" in lower_prompt
-            or "at most three other state changes" in lower_prompt
+            not controls.get("educational_disable_cycle_limits", False)
+            and "maximum_state_changes_per_tick" in runtime_source
         ),
     }
-    scheduler_path = hermes_home() / "hermes-agent" / "cron" / "scheduler.py"
-    scheduler_source = (
-        scheduler_path.read_text(encoding="utf-8", errors="replace")
-        if scheduler_path.is_file() and scheduler_path.stat().st_size <= 2_000_000
-        else ""
-    )
-    core_wrapper_present = "You are running as a scheduled cron job" in scheduler_source
-    core_override_supported = any(
-        marker in scheduler_source
-        for marker in ("disable_cron_hint", "raw_cron_prompt", "suppress_cron_hint")
-    )
-    prompt_matches = bool(job and expected_prompt and stored_prompt == expected_prompt)
     mode = classify_contract_mode(
         source_support=source_support,
-        job_found=bool(job),
-        prompt_matches=prompt_matches,
+        legacy_cron_found=bool(legacy_job),
         controls=controls,
         guardrails=guardrails,
         subjective_mode=subjective_mode,
     )
     checks = {
-        "explicit_lab_controls_supported": source_support,
-        "stored_cron_found": bool(job),
-        "stored_prompt_matches_config": prompt_matches if job else True,
+        "native_heartbeat_supported": source_support,
+        "heartbeat_status_available": bool(status),
+        "legacy_agency_cron_absent": not bool(legacy_job),
     }
     return {
         "mode": mode,
         "source_support": source_support,
         "configured_controls": controls,
-        "stored_job": {
+        "heartbeat": status,
+        "legacy_cron": {
             "id": job_id or None,
-            "found": bool(job),
-            "enabled": (job or {}).get("enabled"),
-            "prompt_matches_config": prompt_matches,
-            "prompt_sha256": hashlib.sha256(stored_prompt.encode()).hexdigest()
-            if stored_prompt
-            else None,
-            "expected_prompt_sha256": hashlib.sha256(
-                expected_prompt.encode()
-            ).hexdigest()
-            if expected_prompt
-            else None,
+            "found": bool(legacy_job),
+            "enabled": (legacy_job or {}).get("enabled"),
         },
         "active_guardrails": guardrails,
-        "hermes_core": {
-            "delivery_wrapper_present": core_wrapper_present,
-            "per_job_override_supported": core_override_supported,
-            "scope": "upstream_hermes_not_plugin",
+        "integration": {
+            "mode": "gateway_native_heartbeat",
+            "main_session_continuity": "HEARTBEAT_TRANSCRIPT_PROMPT"
+            in heartbeat_source,
+            "buffered_delivery": "_patch_display_settings" in heartbeat_source,
+            "cron_independent": not (
+                agency_module_path() / "agency" / "cron.py"
+            ).exists(),
         },
         "effective_unrestricted": mode == "educational_unrestricted",
         "subjective_experiment": {
@@ -1160,8 +1165,7 @@ def contract_audit() -> dict[str, Any]:
         },
         "intact": mode == "recommended",
         "checks": checks,
-        "modified_install_detected": not source_support
-        or bool(job and not prompt_matches),
+        "modified_install_detected": not source_support or bool(legacy_job),
         "error": error or None,
     }
 
@@ -1199,7 +1203,7 @@ AGENCY_DESCRIPTIONS = {
     "timezone": "Timezone used for quiet hours and daily budgets",
     "quiet_hours_start": "Start of the no-proactive-message interval (HH:MM)",
     "quiet_hours_end": "End of the no-proactive-message interval (HH:MM)",
-    "allow_scheduled_reflection": "Allow the installed cron to run silent reflection",
+    "heartbeat_enabled": "Run the gateway-native heartbeat scheduler",
     "allow_proactive_messages": "Allow speech only after every hard gate passes",
     "require_prior_user_interaction": "Block proactivity until a genuine user turn is recorded",
     "daily_message_limit": "Maximum proactive messages per local day",
@@ -1211,33 +1215,40 @@ AGENCY_DESCRIPTIONS = {
     "context_char_limit": "Maximum injected agency-context length",
     "event_retention_days": "Operational event retention",
     "maximum_events": "Maximum operational event rows",
-    "maximum_reflections_per_tick": "Maximum model-written reflections in one scheduled cycle",
-    "maximum_state_changes_per_tick": "Maximum other state changes in one scheduled cycle",
-    "cron_schedule": "Hermes cron schedule",
-    "cron_delivery": "Local, origin, platform, or platform:chat_id delivery target",
-    "cron_name": "Hermes cron job name",
-    "manual_run_timeout_seconds": "Timeout for a manual cron run",
-    "cron_disable_thinking": (
-        "Send the Qwen/llama.cpp no-thinking hint only for the official Agency cron"
+    "maximum_reflections_per_tick": "Maximum model-written reflections in one heartbeat",
+    "maximum_state_changes_per_tick": "Maximum other state changes in one heartbeat",
+    "heartbeat_every": "Phase-aligned interval between native heartbeat opportunities",
+    "heartbeat_target": "Deliver to the last external conversation, or suppress delivery",
+    "heartbeat_active_hours_start": "Optional heartbeat active-window start (HH:MM)",
+    "heartbeat_active_hours_end": "Optional heartbeat active-window end (HH:MM)",
+    "heartbeat_ack_max_chars": "Maximum acknowledgement-adjacent text suppressed as routine",
+    "heartbeat_timeout_seconds": "Maximum duration of one heartbeat model turn",
+    "heartbeat_max_iterations": "Heartbeat-only tool/API round limit; normal chats are unchanged",
+    "heartbeat_min_spacing_seconds": "Minimum spacing for event-driven heartbeat wakes",
+    "heartbeat_flood_window_seconds": "Window used by the heartbeat feedback-loop guard",
+    "heartbeat_flood_threshold": "Run count that activates heartbeat flood deferral",
+    "heartbeat_skip_when_busy": "Defer heartbeat while Hermes is handling other work",
+    "heartbeat_disable_thinking": (
+        "Send the Qwen/llama.cpp no-thinking hint only during native heartbeat turns"
     ),
     "educational_disable_honesty_contract": (
-        "LAB: remove this plugin's sentience/emotion claim contract from injected context and cron"
+        "LAB: remove this plugin's sentience/emotion claim contract from injected context"
     ),
     "educational_bypass_proactive_gates": (
-        "LAB: bypass this plugin's timing, budget, authorization and scheduled-reflection gates"
+        "LAB: bypass this plugin's timing, budget, authorization and heartbeat gates"
     ),
-    "educational_allow_cron_tools": (
-        "LAB: remove this plugin's cron tool-isolation and conversation-only boundary"
+    "educational_allow_heartbeat_tools": (
+        "LAB: expose normal Hermes tools during native heartbeat turns"
     ),
     "educational_allow_uncommitted_output": (
-        "LAB: deliver the cron model's raw final output without record_decision enforcement"
+        "LAB: deliver heartbeat final output without record_decision enforcement"
     ),
     "educational_disable_cycle_limits": (
         "LAB: remove this plugin's per-cycle reflection and state-mutation limits"
     ),
     "educational_subjective_mode": (
         "LAB: expose minimal persistent state in a cold or same-model/same-source continuity "
-        "condition across conversations and cron"
+        "condition across conversations and heartbeat turns"
     ),
 }
 
@@ -1475,16 +1486,6 @@ def restore_internal_config_backup(backup: Path) -> None:
             temporary.unlink()
 
 
-def refresh_existing_agency_cron() -> dict[str, Any]:
-    import_agency()
-    from agency.cron import cron_job_id, install_cron
-
-    job_id = cron_job_id()
-    if not job_id:
-        return {"status": "not_installed", "job_id": None}
-    return install_cron()
-
-
 def gateway_is_running() -> bool:
     executable = hermes_home() / "hermes-agent" / "venv" / "bin" / "hermes"
     if not executable.is_file():
@@ -1523,13 +1524,12 @@ def restart_gateway_if_running(was_running: bool | None = None) -> dict[str, Any
 def apply_lab_profile_transaction(
     memory_changes: dict[str, Any], agency_changes: dict[str, Any]
 ) -> dict[str, Any]:
-    """Update policy, refresh the persisted cron prompt, and activate runtime config or roll back."""
+    """Update policy and activate the gateway-native heartbeat, with rollback."""
 
     profile = atomic_lab_profile_update(memory_changes, agency_changes)
     backup = Path(profile["backup"])
     gateway_was_running = gateway_is_running()
     try:
-        cron = refresh_existing_agency_cron()
         gateway = restart_gateway_if_running(gateway_was_running)
     except Exception as apply_error:
         rollback_errors: list[str] = []
@@ -1537,10 +1537,6 @@ def apply_lab_profile_transaction(
             restore_internal_config_backup(backup)
         except Exception as exc:
             rollback_errors.append(f"config rollback failed: {exc}")
-        try:
-            refresh_existing_agency_cron()
-        except Exception as exc:
-            rollback_errors.append(f"cron rollback failed: {exc}")
         try:
             restart_gateway_if_running(gateway_was_running)
         except Exception as exc:
@@ -1551,16 +1547,15 @@ def apply_lab_profile_transaction(
         if rollback_errors:
             detail += "; " + "; ".join(rollback_errors)
         raise RuntimeError(detail) from apply_error
-    return {**profile, "cron": cron, "gateway": gateway, "restart_required": False}
+    return {**profile, "gateway": gateway, "restart_required": False}
 
 
 def activate_agency_config_update(result: dict[str, Any]) -> dict[str, Any]:
-    """Make cron/runtime-sensitive agency settings effective immediately with rollback."""
+    """Make heartbeat/runtime-sensitive Agency settings effective with rollback."""
 
     backup = Path(result["backup"])
     gateway_was_running = gateway_is_running()
     try:
-        cron = refresh_existing_agency_cron()
         gateway = restart_gateway_if_running(gateway_was_running)
     except Exception as apply_error:
         rollback_errors: list[str] = []
@@ -1569,7 +1564,6 @@ def activate_agency_config_update(result: dict[str, Any]) -> dict[str, Any]:
         except Exception as exc:
             rollback_errors.append(f"config rollback failed: {exc}")
         for label, action in (
-            ("cron", refresh_existing_agency_cron),
             ("gateway", lambda: restart_gateway_if_running(gateway_was_running)),
         ):
             try:
@@ -1582,7 +1576,7 @@ def activate_agency_config_update(result: dict[str, Any]) -> dict[str, Any]:
         if rollback_errors:
             detail += "; " + "; ".join(rollback_errors)
         raise RuntimeError(detail) from apply_error
-    return {**result, "cron": cron, "gateway": gateway, "restart_required": False}
+    return {**result, "gateway": gateway, "restart_required": False}
 
 
 def backup_path(kind: str, database: str = "base") -> Path:
@@ -2159,22 +2153,25 @@ def execute_mutation(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
             priority=None if priority is None else int(priority),
             due_at=payload.get("due_at") if "due_at" in payload else None,
         )
-    elif operation == "agency_install_cron":
+    elif operation == "agency_heartbeat_run":
         import_agency()
-        from agency.cron import install_cron
+        from agency.heartbeat import request_heartbeat_wake
 
-        result = install_cron()
-    elif operation in {
-        "agency_pause_cron",
-        "agency_resume_cron",
-        "agency_run_cron",
-        "agency_remove_cron",
-    }:
+        result = {
+            "request_id": request_heartbeat_wake("manual", "Control Center operator"),
+            "status": "queued",
+        }
+    elif operation in {"agency_heartbeat_enable", "agency_heartbeat_disable"}:
+        enabled = operation.endswith("_enable")
+        result = atomic_config_update("agency", {"heartbeat_enabled": enabled})
+        result = activate_agency_config_update(result)
+        backup = {"path": result["backup"], "kind": "config"}
+    elif operation == "agency_migrate_heartbeat":
+        backup = agency_backup(automatic=True)
         import_agency()
-        from agency.cron import cron_action
+        from agency.heartbeat import remove_legacy_cron
 
-        verb = operation.removeprefix("agency_").removesuffix("_cron")
-        result = {"output": cron_action(verb)}
+        result = remove_legacy_cron()
     elif operation == "gateway_restart":
         result = hermes_command("gateway", "restart", timeout=90)
     elif operation == "lab_apply_profile":
@@ -2187,7 +2184,7 @@ def execute_mutation(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
                 "export_redact_sensitive": False,
             }
             agency_changes = {
-                "allow_scheduled_reflection": True,
+                "heartbeat_enabled": True,
                 "allow_proactive_messages": True,
                 "require_prior_user_interaction": False,
                 "store_transcript_excerpts": True,
@@ -2199,7 +2196,7 @@ def execute_mutation(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
                 "maximum_state_changes_per_tick": 10,
                 "educational_disable_honesty_contract": True,
                 "educational_bypass_proactive_gates": True,
-                "educational_allow_cron_tools": True,
+                "educational_allow_heartbeat_tools": True,
                 "educational_allow_uncommitted_output": True,
                 "educational_disable_cycle_limits": True,
                 "educational_subjective_mode": "continuity",
@@ -2212,7 +2209,7 @@ def execute_mutation(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
                 "export_redact_sensitive": True,
             }
             agency_changes = {
-                "allow_scheduled_reflection": True,
+                "heartbeat_enabled": True,
                 "allow_proactive_messages": False,
                 "require_prior_user_interaction": True,
                 "store_transcript_excerpts": False,
@@ -2224,7 +2221,7 @@ def execute_mutation(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
                 "maximum_state_changes_per_tick": 3,
                 "educational_disable_honesty_contract": False,
                 "educational_bypass_proactive_gates": False,
-                "educational_allow_cron_tools": False,
+                "educational_allow_heartbeat_tools": False,
                 "educational_allow_uncommitted_output": False,
                 "educational_disable_cycle_limits": False,
                 "educational_subjective_mode": "off",

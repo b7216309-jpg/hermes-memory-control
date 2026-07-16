@@ -93,13 +93,12 @@ class BridgeSafetyTests(unittest.TestCase):
 
     def test_expressive_contract_shape_is_distinct_from_unrestricted(self):
         controls = {key: True for key in bridge.EDUCATIONAL_AGENCY_KEYS}
-        controls["educational_allow_cron_tools"] = False
+        controls["educational_allow_heartbeat_tools"] = False
         mode = bridge.classify_contract_mode(
             source_support=True,
-            job_found=True,
-            prompt_matches=True,
+            legacy_cron_found=False,
             controls=controls,
-            guardrails={"cron_tool_isolation": True},
+            guardrails={"heartbeat_tool_isolation": True},
             subjective_mode="continuity",
         )
 
@@ -415,7 +414,7 @@ class BridgeSafetyTests(unittest.TestCase):
         self.assertEqual(bridge.cron_registry_job("agency-job")["prompt"], "expected")
         self.assertIsNone(bridge.cron_registry_job("missing"))
 
-    def test_lab_profile_transaction_refreshes_cron_and_runtime(self):
+    def test_lab_profile_transaction_restarts_runtime(self):
         backup = self.home / "control-center" / "config-backups" / "config.yaml"
         with (
             mock.patch.object(
@@ -423,11 +422,6 @@ class BridgeSafetyTests(unittest.TestCase):
                 "atomic_lab_profile_update",
                 return_value={"backup": str(backup), "restart_required": True},
             ),
-            mock.patch.object(
-                bridge,
-                "refresh_existing_agency_cron",
-                return_value={"status": "updated"},
-            ) as refresh,
             mock.patch.object(
                 bridge,
                 "restart_gateway_if_running",
@@ -436,12 +430,10 @@ class BridgeSafetyTests(unittest.TestCase):
             mock.patch.object(bridge, "gateway_is_running", return_value=True),
         ):
             result = bridge.apply_lab_profile_transaction({}, {})
-        refresh.assert_called_once_with()
         restart.assert_called_once_with(True)
         self.assertFalse(result["restart_required"])
-        self.assertEqual(result["cron"]["status"], "updated")
 
-    def test_lab_profile_transaction_rolls_back_on_cron_refresh_failure(self):
+    def test_lab_profile_transaction_rolls_back_on_gateway_failure(self):
         backup = self.home / "control-center" / "config-backups" / "config.yaml"
         with (
             mock.patch.object(
@@ -451,17 +443,16 @@ class BridgeSafetyTests(unittest.TestCase):
             ),
             mock.patch.object(
                 bridge,
-                "refresh_existing_agency_cron",
-                side_effect=[RuntimeError("refresh failed"), {"status": "updated"}],
-            ),
-            mock.patch.object(bridge, "restart_gateway_if_running") as restart,
+                "restart_gateway_if_running",
+                side_effect=[RuntimeError("restart failed"), {"status": "restarted"}],
+            ) as restart,
             mock.patch.object(bridge, "restore_internal_config_backup") as restore,
             mock.patch.object(bridge, "gateway_is_running", return_value=True),
         ):
             with self.assertRaisesRegex(RuntimeError, "rolled back"):
                 bridge.apply_lab_profile_transaction({}, {})
         restore.assert_called_once_with(backup)
-        restart.assert_called_once_with(True)
+        self.assertEqual(restart.call_args_list, [mock.call(True), mock.call(True)])
 
     def test_gateway_activation_restores_original_running_state(self):
         with (
@@ -480,18 +471,20 @@ class BridgeSafetyTests(unittest.TestCase):
             )
         command.assert_not_called()
 
-    def test_standalone_cron_action_bootstraps_installed_agency_import(self):
+    def test_standalone_heartbeat_wake_bootstraps_installed_agency_import(self):
         package = ModuleType("agency")
         package.__path__ = []
-        cron = ModuleType("agency.cron")
-        cron.cron_action = lambda verb: f"ran {verb}"
+        heartbeat = ModuleType("agency.heartbeat")
+        heartbeat.request_heartbeat_wake = lambda intent, reason: "request-1"
         with (
-            mock.patch.dict("sys.modules", {"agency": package, "agency.cron": cron}),
+            mock.patch.dict(
+                "sys.modules", {"agency": package, "agency.heartbeat": heartbeat}
+            ),
             mock.patch.object(bridge, "import_agency") as bootstrap,
         ):
-            result = bridge.execute_mutation("agency_run_cron", {})
+            result = bridge.execute_mutation("agency_heartbeat_run", {})
         bootstrap.assert_called_once_with()
-        self.assertEqual(result["result"]["output"], "ran run")
+        self.assertEqual(result["result"]["request_id"], "request-1")
 
 
 if __name__ == "__main__":

@@ -13,9 +13,9 @@ async function main() {
   assert.equal(probe.memory.installed, true);
   assert.equal(probe.agency.installed, true);
   assert.equal(probe.agency.runtime.contract.source_support, true);
-  if (probe.agency.runtime.contract.stored_job.found) {
-    assert.equal(probe.agency.runtime.contract.stored_job.prompt_matches_config, true);
-  }
+  assert.equal(probe.agency.runtime.contract.legacy_cron.found, false);
+  assert.equal(probe.agency.runtime.contract.integration.mode, 'gateway_native_heartbeat');
+  assert.equal(probe.agency.runtime.contract.integration.main_session_continuity, true);
   const database = probe.memory.databases.find((item) => item.exists)?.id;
   assert(database, 'No memory database exists');
   const overview = await runBridge(profile, 'memory_overview', { database });
@@ -34,6 +34,7 @@ async function main() {
   assert(Array.isArray(graph.edges));
   const agency = await runBridge(profile, 'agency_snapshot', {});
   assert(agency.snapshot.runtime);
+  assert.equal(typeof agency.heartbeat.enabled, 'boolean');
   for (const table of ['intentions','reflections','decisions','events','meta']) {
     const result = await runBridge(profile, 'agency_list', { table, limit: 2 });
     assert.equal(result.table, table);

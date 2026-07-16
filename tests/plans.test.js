@@ -39,7 +39,7 @@ test('educational controls require the lab boundary', () => {
   assert.equal(isLabAction('lab_apply_profile', {}), true);
   assert.equal(isLabAction('memory_export', { include_sensitive: true }), true);
   assert.equal(isLabAction('config_apply', { changes: { allow_credential_memory: true } }), true);
-  assert.equal(isLabAction('config_apply', { changes: { educational_allow_cron_tools: true } }), true);
+  assert.equal(isLabAction('config_apply', { changes: { educational_allow_heartbeat_tools: true } }), true);
   assert.equal(isLabAction('config_apply', { changes: { educational_subjective_mode: 'cold' } }), true);
   assert.equal(isLabAction('config_apply', { changes: { prefetch_limit: 8 } }), false);
 });

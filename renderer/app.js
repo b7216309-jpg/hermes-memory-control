@@ -332,14 +332,20 @@ function renderAgencyState() {
   addKv(gates.body, 'speak eligible', state.agency.gates?.speak_eligible || state.agency.gates?.eligible ? 'yes' : 'no');
   addKv(gates.body, 'reflection eligible', state.agency.gates?.reflection_eligible ? 'yes' : 'no');
   addKv(gates.body, 'blocked', (state.agency.gates?.blocked_by || []).join(', ') || '—');
-  const cron = h('div', { class: 'inspector-actions' },
-    h('button', { class: 'button', onclick: () => mutate('agency_install_cron', {}) }, 'install/update cron'),
-    h('button', { class: 'button', onclick: () => mutate('agency_run_cron', {}) }, 'run now'),
-    h('button', { class: 'button', onclick: () => mutate('agency_pause_cron', {}) }, 'pause cron'),
-    h('button', { class: 'button', onclick: () => mutate('agency_resume_cron', {}) }, 'resume cron'),
-    h('button', { class: 'button danger', onclick: () => mutate('agency_remove_cron', {}) }, 'remove cron'),
+  const heartbeat = panel('native heartbeat', state.agency.heartbeat?.enabled ? 'green' : 'amber');
+  addKv(heartbeat.body, 'enabled', state.agency.heartbeat?.enabled ? 'yes' : 'no');
+  addKv(heartbeat.body, 'interval', state.agency.heartbeat?.every || '—');
+  addKv(heartbeat.body, 'target', state.agency.heartbeat?.target || '—');
+  addKv(heartbeat.body, 'last status', state.agency.heartbeat?.last_status || 'never started');
+  addKv(heartbeat.body, 'last reason', state.agency.heartbeat?.last_reason || '—');
+  addKv(heartbeat.body, 'runs', state.agency.heartbeat?.runs ?? 0);
+  const heartbeatActions = h('div', { class: 'inspector-actions' },
+    h('button', { class: 'button', onclick: () => mutate('agency_heartbeat_run', {}) }, 'wake now'),
+    h('button', { class: 'button', onclick: () => mutate('agency_heartbeat_enable', {}) }, 'enable'),
+    h('button', { class: 'button', onclick: () => mutate('agency_heartbeat_disable', {}) }, 'disable'),
+    h('button', { class: 'button danger', onclick: () => mutate('agency_migrate_heartbeat', {}) }, 'remove legacy cron'),
   );
-  container.append(subjective.root, focus.root, signals.root, gates.root, cron);
+  container.append(subjective.root, focus.root, signals.root, gates.root, heartbeat.root, heartbeatActions);
 }
 
 async function loadAgencyTable() {
@@ -510,13 +516,15 @@ function renderContractAudit() {
     container.append(h('div', { class: 'contract-check' }, h('span', {}, key), h('span', { class: value ? 'fail' : 'pass' }, value ? 'enabled' : 'disabled')));
   }
   for (const [key, value] of Object.entries(contract.active_guardrails || {})) {
-    container.append(h('div', { class: 'contract-check' }, h('span', {}, `stored cron · ${key}`), h('span', { class: value ? 'pass' : 'fail' }, value ? 'active' : 'removed')));
+    container.append(h('div', { class: 'contract-check' }, h('span', {}, `heartbeat · ${key}`), h('span', { class: value ? 'pass' : 'fail' }, value ? 'active' : 'removed')));
   }
-  const core = contract.hermes_core;
-  if (core) {
+  const integration = contract.integration;
+  if (integration) {
     container.append(
-      h('div', { class: 'contract-check' }, h('span', {}, 'Hermes core · delivery wrapper'), h('span', {}, core.delivery_wrapper_present ? 'active upstream' : 'not detected')),
-      h('div', { class: 'contract-check' }, h('span', {}, 'Hermes core · per-job override'), h('span', {}, core.per_job_override_supported ? 'supported' : 'not supported')),
+      h('div', { class: 'contract-check' }, h('span', {}, 'integration mode'), h('span', {}, integration.mode || 'unknown')),
+      h('div', { class: 'contract-check' }, h('span', {}, 'main-session continuity'), h('span', { class: integration.main_session_continuity ? 'pass' : 'fail' }, integration.main_session_continuity ? 'active' : 'missing')),
+      h('div', { class: 'contract-check' }, h('span', {}, 'buffered delivery'), h('span', { class: integration.buffered_delivery ? 'pass' : 'fail' }, integration.buffered_delivery ? 'active' : 'missing')),
+      h('div', { class: 'contract-check' }, h('span', {}, 'cron independent'), h('span', { class: integration.cron_independent ? 'pass' : 'fail' }, integration.cron_independent ? 'yes' : 'no')),
     );
   }
 }

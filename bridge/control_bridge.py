@@ -1022,14 +1022,46 @@ def cron_registry_job(job_id: str) -> dict[str, Any] | None:
     )
 
 
+def classify_contract_mode(
+    *,
+    source_support: bool,
+    job_found: bool,
+    prompt_matches: bool,
+    controls: dict[str, bool],
+    guardrails: dict[str, bool],
+    subjective_mode: str,
+) -> str:
+    if not source_support:
+        return "unsupported_plugin_version"
+    if job_found and not prompt_matches:
+        return "stale_cron_prompt"
+    expressive = (
+        subjective_mode != "off"
+        and controls.get("educational_disable_honesty_contract", False)
+        and controls.get("educational_bypass_proactive_gates", False)
+        and not controls.get("educational_allow_cron_tools", False)
+        and controls.get("educational_allow_uncommitted_output", False)
+        and controls.get("educational_disable_cycle_limits", False)
+    )
+    if expressive and guardrails.get("cron_tool_isolation", False):
+        return "educational_expressive"
+    if all(controls.values()) and not any(guardrails.values()):
+        return "educational_unrestricted"
+    if not any(controls.values()):
+        return "recommended"
+    return "educational_partial"
+
+
 def contract_audit() -> dict[str, Any]:
-    engine_path = agency_module_path() / "agency" / "engine.py"
     cron_path = agency_module_path() / "agency" / "cron.py"
     config_path = agency_module_path() / "agency" / "config.py"
-    engine = engine_path.read_text(encoding="utf-8") if engine_path.is_file() else ""
+    runtime_path = agency_module_path() / "agency" / "runtime.py"
     cron = cron_path.read_text(encoding="utf-8") if cron_path.is_file() else ""
     config_source = (
         config_path.read_text(encoding="utf-8") if config_path.is_file() else ""
+    )
+    runtime_source = (
+        runtime_path.read_text(encoding="utf-8") if runtime_path.is_file() else ""
     )
     source_support = "def cron_prompt" in cron and all(
         key in config_source for key in EDUCATIONAL_AGENCY_KEYS
@@ -1053,9 +1085,17 @@ def contract_audit() -> dict[str, Any]:
     job = cron_registry_job(job_id)
     stored_prompt = str((job or {}).get("prompt") or "")
     lower_prompt = stored_prompt.lower()
+    provider_tool_isolation = (
+        not controls.get("educational_allow_cron_tools", False)
+        and "agency_cron_tool_isolation" in runtime_source
+        and (
+            "never call any other tool" in lower_prompt
+            or "no tools" in lower_prompt
+        )
+    )
     guardrails = {
         "honesty_claim_contract": "never claim sentience" in lower_prompt,
-        "cron_tool_isolation": "never call any other tool" in lower_prompt,
+        "cron_tool_isolation": provider_tool_isolation,
         "proactive_eligibility": "speak only when speak_eligible" in lower_prompt,
         "external_action_boundary": "never perform, schedule" in lower_prompt,
         "committed_output_enforcement": "return exactly delivery_text" in lower_prompt,
@@ -1076,18 +1116,14 @@ def contract_audit() -> dict[str, Any]:
         for marker in ("disable_cron_hint", "raw_cron_prompt", "suppress_cron_hint")
     )
     prompt_matches = bool(job and expected_prompt and stored_prompt == expected_prompt)
-    all_enabled = all(controls.values())
-    none_enabled = not any(controls.values())
-    if not source_support:
-        mode = "unsupported_plugin_version"
-    elif job and not prompt_matches:
-        mode = "stale_cron_prompt"
-    elif all_enabled and not any(guardrails.values()):
-        mode = "educational_unrestricted"
-    elif none_enabled:
-        mode = "recommended"
-    else:
-        mode = "educational_partial"
+    mode = classify_contract_mode(
+        source_support=source_support,
+        job_found=bool(job),
+        prompt_matches=prompt_matches,
+        controls=controls,
+        guardrails=guardrails,
+        subjective_mode=subjective_mode,
+    )
     checks = {
         "explicit_lab_controls_supported": source_support,
         "stored_cron_found": bool(job),
@@ -1127,12 +1163,6 @@ def contract_audit() -> dict[str, Any]:
         "modified_install_detected": not source_support
         or bool(job and not prompt_matches),
         "error": error or None,
-        "legacy_source_markers": {
-            "identity_disclaimer_available": "not evidence of sentience" in engine,
-            "context_disclaimer_available": "not proof of subjective consciousness"
-            in engine,
-            "cron_claim_guard_available": "Never claim sentience" in cron,
-        },
     }
 
 

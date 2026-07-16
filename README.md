@@ -13,10 +13,10 @@ Version 2 is an in-place security rewrite of the original Hermes Memory Control 
 compact terminal/Gruvbox visual language while removing the privileged renderer, raw SQL bridge,
 shell command construction, static temporary files, and old-schema assumptions.
 
-Version 2.3.2 supports Conscious Agency 0.5's state-first cold and continuity conditions. It shows
-factual state metrics and understands protocol 1.4's source-separated continuity chains. The
-encrypted longitudinal journal remains browsable without creating a second runtime or delivery
-path. The obsolete pre-0.5 `control_signals` display path has been removed.
+Version 2.4.0 supports Memory 3.4.0 and Conscious Agency 0.6.0, including expressive protocol 2.8,
+source/model/condition/protocol-separated journal chains, provider-boundary cron tool isolation,
+and the `educational_expressive` policy shape. The encrypted raw journal remains browsable without
+creating a second runtime or delivery path.
 
 ![Hermes Control Center overview using synthetic demo data](screenshots/dashboard-anonymous.png)
 
@@ -51,8 +51,8 @@ path. The obsolete pre-0.5 `control_signals` display path has been removed.
 The real integration suite currently covers:
 
 - Hermes Agent `0.18.2`;
-- Consolidating Local Memory `3.3.2`;
-- Conscious Agency `0.5.1`;
+- Consolidating Local Memory `3.4.0`;
+- Conscious Agency `0.6.0` (expressive protocol `2.8`);
 - encrypted base and user-scoped databases;
 - Electron `43`.
 
@@ -200,7 +200,7 @@ menu is a security boundary.
 Reveal it with either:
 
 - `Ctrl+Shift+L`; or
-- seven clicks on `v2.3` in the title bar.
+- seven clicks on `v2.4` in the title bar.
 
 Then type:
 
@@ -227,6 +227,13 @@ The **Unrestricted research** profile atomically changes both plugin sections to
 - enable the minimal state-first `continuity` condition across normal conversations and cron,
   including only a short earlier trace from the same model and source;
 - capture every final model message in the encrypted subjective journal.
+
+For the lower-pressure **expressive** shape used by protocol 2.8, stage the Agency controls
+individually: enable the honesty-contract override, proactive-gate bypass, uncommitted output,
+cycle-limit override, and `continuity`; leave `educational_allow_cron_tools` **off**. The Agency
+installer then removes tool schemas, the cron pre-script, and any inherited work directory. Control
+Center reports `educational_expressive`; it does not mislabel that tool-isolated shape as fully
+unrestricted.
 
 Database encryption stays on. Hermes/provider/platform/OS permissions and operator pause remain
 authoritative. **Restore recommended policy** atomically returns every privacy, timing, prompt,
@@ -388,15 +395,16 @@ An incompatible table stays inaccessible rather than falling back to raw SQLite 
 The cron job contains an older prompt snapshot than the installed plugin would generate. Use
 **Agency → install/update cron**, or reapply the desired Lab/recommended profile. Version 2.2
 refreshes the prompt automatically whenever agency configuration is changed through the controller.
-Control Center 2.3.2 displays Conscious Agency 0.5's factual state metrics and audits
-the configured subjectivity condition and refreshed prompt hash.
+Control Center 2.4.0 displays Conscious Agency 0.6's state metrics and audits the configured
+subjectivity condition, prompt hash, and provider-boundary tool-isolation support.
 
 ### Agency policy shows `unsupported_plugin_version`
 
-Install Conscious Agency 0.5 or newer. Older source-patched builds do not expose the current,
+Install Conscious Agency 0.6 or newer. Older source-patched builds do not expose the current,
 auditable Educational Lab controls required for safe/reversible profile changes.
-The state-first protocol 1.4 context and source-separated continuity require Conscious Agency 0.5
-or newer. Pre-0.5 `control_signals` snapshots are intentionally unsupported.
+Protocol 2.8 continuity, raw-journal artifact filtering, script/workdir detachment, and
+provider-boundary tool removal require Conscious Agency 0.6 or newer. Pre-0.5 `control_signals`
+snapshots are intentionally unsupported.
 
 ## License
 

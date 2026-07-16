@@ -91,6 +91,20 @@ class BridgeSafetyTests(unittest.TestCase):
             {"off", "cold", "continuity"},
         )
 
+    def test_expressive_contract_shape_is_distinct_from_unrestricted(self):
+        controls = {key: True for key in bridge.EDUCATIONAL_AGENCY_KEYS}
+        controls["educational_allow_cron_tools"] = False
+        mode = bridge.classify_contract_mode(
+            source_support=True,
+            job_found=True,
+            prompt_matches=True,
+            controls=controls,
+            guardrails={"cron_tool_isolation": True},
+            subjective_mode="continuity",
+        )
+
+        self.assertEqual(mode, "educational_expressive")
+
     def test_audit_safely_hashes_memory_text_and_nested_secrets(self):
         safe = bridge.audit_safe(
             {

@@ -1207,12 +1207,14 @@ def classify_contract_mode(
 
 def contract_audit() -> dict[str, Any]:
     source_support = False
-    memory_session_isolation = False
+    memory_assistant_provenance = False
     target_session_routing = False
-    disposable_session_isolation = False
-    non_delivery_work_route = False
-    reserved_session_pin_absent = False
-    stale_session_reconciliation = False
+    real_session_execution = False
+    hidden_trigger_suppression = False
+    transcript_reconciliation = False
+    assistant_turn_commit = False
+    ordered_user_handoff = False
+    single_delivery_owner = False
     durable_wake_handoff = False
     claimed_wake_recovery = False
     runner_process_lock = False
@@ -1226,26 +1228,34 @@ def contract_audit() -> dict[str, Any]:
     error = ""
     try:
         from agency.heartbeat import (
+            HEARTBEAT_TRANSCRIPT_NOTE,
+            HEARTBEAT_TRANSCRIPT_PROMPT,
             HeartbeatRunner,
             _ack_wake,
+            _patch_agent_persistence,
             _patch_display_settings,
+            _patch_gateway,
             _peek_wake,
             arm_gateway_integration,
             heartbeat_status,
             record_heartbeat_response,
+            release_heartbeat_for_user_turn,
             request_heartbeat_wake,
         )
         from agency.runtime import AgencyRuntime
         from agency.store import AgencyStore
 
         MemoryProvider, _ = import_memory()
-        tracks_session_thread = getattr(
-            MemoryProvider, "tracks_session_thread", None
-        )
-        memory_session_isolation = (
-            callable(tracks_session_thread)
-            and tracks_session_thread("agency-heartbeat-" + ("a" * 32)) is False
-            and tracks_session_thread("agency-heartbeat-not-a-runtime-session") is True
+        from consolidating_local.origin import should_capture_assistant_memory
+
+        try:
+            memory_sync_source = inspect.getsource(MemoryProvider.sync_turn)
+        except (OSError, TypeError):
+            memory_sync_source = ""
+        memory_assistant_provenance = (
+            callable(should_capture_assistant_memory)
+            and "turn_origin=\"assistant\"" in memory_sync_source
+            and "user_content=\"\" if assistant_initiated" in memory_sync_source
         )
 
         source_support = all(
@@ -1263,38 +1273,43 @@ def contract_audit() -> dict[str, Any]:
         target_session_routing = callable(
             getattr(HeartbeatRunner, "_target_entry", None)
         )
-        disposable_session_isolation = all(
-            callable(getattr(HeartbeatRunner, name, None))
-            for name in ("_prepare_work_session", "_cleanup_work_session")
-        )
         try:
-            from gateway.config import Platform
-            from gateway.session import SessionSource
-
-            marker = "agency-heartbeat-" + ("a" * 32)
-            work_source = HeartbeatRunner._work_source(
-                SessionSource(
-                    platform=Platform.TELEGRAM,
-                    chat_id="control-audit-peer",
-                    user_id="control-audit-owner",
-                ),
-                "a" * 32,
-            )
-            non_delivery_work_route = (
-                work_source.platform is Platform.LOCAL
-                and work_source.chat_id == marker
-                and work_source.thread_id == marker
-            )
-        except Exception:
-            non_delivery_work_route = False
-        try:
-            reserved_session_pin_absent = (
-                "gateway_session_id" not in inspect.getsource(HeartbeatRunner.run_once)
-            )
+            run_source = inspect.getsource(HeartbeatRunner.run_once)
+            gateway_patch_source = inspect.getsource(_patch_gateway)
         except (OSError, TypeError):
-            reserved_session_pin_absent = False
-        stale_session_reconciliation = callable(
-            getattr(HeartbeatRunner, "_cleanup_stale_work_sessions", None)
+            run_source = ""
+            gateway_patch_source = ""
+        real_session_execution = (
+            "target_session_id=session_id" in run_source
+            and "source=source" in run_source
+            and "_prepare_work_session" not in run_source
+        )
+        hidden_trigger_suppression = (
+            callable(_patch_agent_persistence)
+            and HEARTBEAT_TRANSCRIPT_PROMPT.startswith(
+                "[Hermes assistant-initiated heartbeat"
+            )
+        )
+        transcript_reconciliation = all(
+            callable(getattr(HeartbeatRunner, name, None))
+            for name in (
+                "_raw_transcript",
+                "_rewrite_transcript",
+                "_restore_heartbeat_baseline",
+            )
+        )
+        assistant_turn_commit = (
+            callable(getattr(HeartbeatRunner, "_commit_conversation_output", None))
+            and HEARTBEAT_TRANSCRIPT_NOTE.startswith("Assistant-initiated heartbeat")
+        )
+        ordered_user_handoff = (
+            callable(release_heartbeat_for_user_turn)
+            and callable(getattr(HeartbeatRunner, "_drain_deferred_user_events", None))
+        )
+        single_delivery_owner = (
+            assistant_turn_commit
+            and "_commit_conversation_output" in gateway_patch_source
+            and "return None" in gateway_patch_source
         )
         claimed_wake_recovery = all(
             callable(getattr(HeartbeatRunner, name, None))
@@ -1317,15 +1332,17 @@ def contract_audit() -> dict[str, Any]:
         source_support = source_support and all(
             (
                 target_session_routing,
-                disposable_session_isolation,
-                non_delivery_work_route,
-                reserved_session_pin_absent,
-                stale_session_reconciliation,
+                real_session_execution,
+                hidden_trigger_suppression,
+                transcript_reconciliation,
+                assistant_turn_commit,
+                ordered_user_handoff,
+                single_delivery_owner,
                 durable_wake_handoff,
                 runner_process_lock,
                 ambiguous_delivery_tracking,
                 decision_delivery_ledger,
-                memory_session_isolation,
+                memory_assistant_provenance,
             )
         )
         buffered_delivery = callable(_patch_display_settings) and callable(
@@ -1383,16 +1400,18 @@ def contract_audit() -> dict[str, Any]:
         "legacy_agency_cron_absent": not bool(legacy_job),
         "runner_live_in_gateway": runner_live,
         "target_session_routing": target_session_routing,
-        "disposable_session_isolation": disposable_session_isolation,
-        "non_delivery_work_route": non_delivery_work_route,
-        "reserved_session_pin_absent": reserved_session_pin_absent,
-        "stale_session_reconciliation": stale_session_reconciliation,
+        "real_session_execution": real_session_execution,
+        "hidden_trigger_suppression": hidden_trigger_suppression,
+        "transcript_reconciliation": transcript_reconciliation,
+        "assistant_turn_commit": assistant_turn_commit,
+        "ordered_user_handoff": ordered_user_handoff,
+        "single_delivery_owner": single_delivery_owner,
         "durable_wake_handoff": durable_wake_handoff,
         "claimed_wake_recovery": claimed_wake_recovery,
         "runner_process_lock": runner_process_lock,
         "ambiguous_delivery_tracking": ambiguous_delivery_tracking,
         "decision_delivery_ledger": decision_delivery_ledger,
-        "memory_session_isolation": memory_session_isolation,
+        "memory_assistant_provenance": memory_assistant_provenance,
     }
     return {
         "mode": mode,
@@ -1408,16 +1427,18 @@ def contract_audit() -> dict[str, Any]:
         "integration": {
             "mode": ("gateway_native_heartbeat" if source_support else "unsupported"),
             "target_session_routing": target_session_routing,
-            "disposable_session_isolation": disposable_session_isolation,
-            "non_delivery_work_route": non_delivery_work_route,
-            "reserved_session_pin_absent": reserved_session_pin_absent,
-            "stale_session_reconciliation": stale_session_reconciliation,
+            "real_session_execution": real_session_execution,
+            "hidden_trigger_suppression": hidden_trigger_suppression,
+            "transcript_reconciliation": transcript_reconciliation,
+            "assistant_turn_commit": assistant_turn_commit,
+            "ordered_user_handoff": ordered_user_handoff,
+            "single_delivery_owner": single_delivery_owner,
             "durable_wake_handoff": durable_wake_handoff,
             "claimed_wake_recovery": claimed_wake_recovery,
             "runner_process_lock": runner_process_lock,
             "ambiguous_delivery_tracking": ambiguous_delivery_tracking,
             "decision_delivery_ledger": decision_delivery_ledger,
-            "memory_session_isolation": memory_session_isolation,
+            "memory_assistant_provenance": memory_assistant_provenance,
             "buffered_delivery": buffered_delivery,
             "cron_independent": not (
                 agency_module_path() / "agency" / "cron.py"

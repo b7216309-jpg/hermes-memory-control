@@ -5,10 +5,10 @@ A local Windows/Electron audit and control surface for the Hermes suite:
 - [Hermes Consolidating Local Memory](https://github.com/b7216309-jpg/hermes-consolidating-local-memory)
 - [Hermes Conscious Agency](https://github.com/b7216309-jpg/hermes-conscious-agency)
 
-Version 3.1 supports Memory 3.5 and Conscious Agency 1.1's gateway-native heartbeat. It audits
-disposable-session cleanup, Memory isolation, claimed-wake recovery, process ownership, and
-at-most-once delivery in addition to status, wake, enable, disable, migration, and preservation of
-every unrelated Hermes cron job.
+Version 3.2 supports Memory 3.6 and Conscious Agency 1.2's real-conversation heartbeat. It audits
+hidden-trigger suppression, exact assistant-turn commit, Memory provenance, ordered user handoff,
+process ownership, and at-most-once delivery in addition to status, wake, enable, disable,
+migration, and preservation of every unrelated Hermes cron job.
 
 ![Anonymous dashboard](screenshots/dashboard-anonymous.png)
 
@@ -43,7 +43,7 @@ raw process access. Every write is selected from a fixed operation list in the W
 
 ## Native heartbeat controls
 
-Conscious Agency 1.1 no longer owns a Hermes cron job. Control Center exposes:
+Conscious Agency 1.2 no longer owns a Hermes cron job. Control Center exposes:
 
 - current enablement, interval, target, active hours, next due time, last status/reason, and run
   count;
@@ -52,10 +52,10 @@ Conscious Agency 1.1 no longer owns a Hermes cron job. Control Center exposes:
   already running;
 - **Remove legacy cron**, which first backs up Agency state, then asks the plugin to remove only the
   cron ID recorded in its own database and migrate retired config keys;
-- a source/runtime audit for target-session routing, disposable-session cleanup, stale-session
-  reconciliation, Memory isolation, a non-delivery model-work route, absence of Hermes' reserved
-  async-delegation session pin, claimed-wake recovery, the runner process lease, delivery outcomes,
-  structured response, guardrail state, and cron independence.
+- a source/runtime audit for target-session routing, real-session execution, hidden-trigger
+  persistence suppression, transcript reconciliation, exact assistant commit, single delivery
+  ownership, ordered user handoff, Memory assistant provenance, claimed-wake recovery, the runner
+  process lease, delivery outcomes, structured response, guardrail state, and cron independence.
 
 ```mermaid
 flowchart LR
@@ -205,8 +205,8 @@ npm run test:all
 Coverage includes payload sanitization, exact per-action contracts, preflight source/database
 fingerprints, cross-process mutation exclusion, Lab gating, renderer isolation, CSP, WSL argument
 safety, privacy markers, synthetic screenshots, audit-chain tamper detection, config rollback,
-encrypted backup/restore rules, temporal-memory invariants, native-heartbeat lifecycle contracts,
-Memory isolation, and exact legacy-cron scoping.
+encrypted backup/restore rules, temporal-memory invariants, real-session heartbeat lifecycle
+contracts, assistant-origin Memory capture, and exact legacy-cron scoping.
 
 ## Data locations
 

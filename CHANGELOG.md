@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.2.0 — 2026-07-17
+
+- Updated the suite contract for Memory 3.6 and Conscious Agency 1.2 real-conversation heartbeat
+  execution.
+- Replaced retired disposable-session audits with checks for real-session execution, hidden-trigger
+  persistence suppression, transcript reconciliation, exact assistant commit, single delivery
+  ownership, and ordered inbound-user handoff.
+- Added Memory assistant-provenance auditing so heartbeat output can enter the real Memory session
+  without being classified as a user statement.
+- Updated anonymous demo data, UI versioning, documentation, and regression coverage for the new
+  integration contract.
+
 ## 3.1.0 — 2026-07-17
 
 - Added complete Memory 3.5 and Conscious Agency 1.1 contract coverage, including disposable

@@ -1,3 +1,5 @@
+# ⚠️ NOT WORKING, UNDER MAINTENANCE ⚠️
+
 # Hermes Control Center
 
 A local Windows/Electron audit and control surface for the Hermes suite:
